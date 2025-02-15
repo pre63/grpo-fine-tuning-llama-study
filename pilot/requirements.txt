@@ -1,0 +1,12 @@
+bitsandbytes
+datasets
+protobuf
+torch
+torchvision
+torchaudio
+transformers
+peft
+numpy
+scipy
+sentencepiece
+accelerate

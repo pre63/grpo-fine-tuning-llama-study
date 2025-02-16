@@ -64,18 +64,18 @@ def train_grpo_llama():
 
   bnb_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16, llm_int8_enable_fp32_cpu_offload=True)
   # Policy model: 4-bit quantized on GPU
-  policy_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", quantization_config=bnb_config, device_map="auto")
+  policy_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", quantization_config=bnb_config, device_map=device)
   peft_config = LoraConfig(r=8, lora_alpha=16, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
   policy_llama = get_peft_model(policy_llama, peft_config)
-  policy_model = GRPONetwork(policy_llama).eval()
+  policy_model = GRPONetwork(policy_llama, device=device).eval()
 
   # Reference model: full precision on CPU to avoid bitsandbytes errors
-  reference_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", device_map="cpu")
+  reference_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", device_map=device)
   reference_model = GRPONetwork(reference_llama).eval()
 
   ref_sd = get_peft_model_state_dict(policy_model.model)
   optimizer = optim.Adam(policy_model.parameters(), lr=1e-5)
-  group_buffer = GroupBuffer(max_size=5)
+  group_buffer = GroupBuffer(max_size=5, device=device)
 
   gamma = 0.99
   epsilon = 0.2
@@ -86,6 +86,7 @@ def train_grpo_llama():
   dataset_iter = iter(train_data)
 
   for epoch in range(epochs):
+    print("New Epoch:", epoch)
     reference_model.load_state_dict(ref_sd, strict=False)
     group_returns = []
     input_batches = []
@@ -98,8 +99,8 @@ def train_grpo_llama():
         batch = [next(dataset_iter) for __ in range(batch_size)]
 
       collated = data_collator(batch)
-      input_ids = collated["input_ids"].to("cuda")
-      attention_mask = collated["attention_mask"].to("cuda")
+      input_ids = collated["input_ids"].to(device)
+      attention_mask = collated["attention_mask"].to(device)
 
       with torch.no_grad():
         # Reference model on CPU
@@ -127,7 +128,7 @@ def train_grpo_llama():
     advantages = group_buffer.calculate_relative_advantage(group_returns)
 
     for i, (inp, attn, acts, logp_old, rews, ref_logits) in enumerate(input_batches):
-      advantage = torch.tensor([advantages[i]] * len(acts), dtype=torch.float, device="cuda")
+      advantage = torch.tensor([advantages[i]] * len(acts), dtype=torch.float, device=device)
       logits = policy_model(inp, attn)
       dist_new = Categorical(logits=logits)
       log_probs_new = dist_new.log_prob(acts)

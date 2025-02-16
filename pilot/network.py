@@ -8,15 +8,17 @@ from peft import get_peft_model, get_peft_model_state_dict
 from torch.distributions import Categorical
 from transformers import PretrainedConfig, PreTrainedModel
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 class GRPONetwork(nn.Module):
-  def __init__(self, model):
+  def __init__(self, model, device="cpu"):
     super().__init__()
-    self.model = model
+    self.model = model.to(device)
+    self.device = device
 
   def forward(self, input_ids, attention_mask=None):
+    input_ids = input_ids.to(self.device)
+    if attention_mask is not None:
+      attention_mask = attention_mask.to(self.device)
     outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, output_attentions=False, output_hidden_states=False)
     logits = outputs.logits[:, -1, :]
     return logits
@@ -53,20 +55,20 @@ def calculate_kl_divergence(new_logits, ref_logits):
   return kl_div
 
 
-def test_group_buffer():
+def test_group_buffer(device="cpu"):
   buffer = GroupBuffer(max_size=3)
 
   # Add mock policies and returns
-  buffer.add({"layer1": torch.tensor([1.0])}, 1.0)
-  buffer.add({"layer1": torch.tensor([2.0])}, 2.0)
-  buffer.add({"layer1": torch.tensor([3.0])}, 3.0)
+  buffer.add({"layer1": torch.tensor([1.0], device=device)}, 1.0)
+  buffer.add({"layer1": torch.tensor([2.0], device=device)}, 2.0)
+  buffer.add({"layer1": torch.tensor([3.0], device=device)}, 3.0)
 
   assert len(buffer.policies) == 3, f"Expected 3 policies, got {len(buffer.policies)}"
   assert len(buffer.returns) == 3, f"Expected 3 returns, got {len(buffer.returns)}"
   assert buffer.mean_return() == 2.0, f"Expected mean return 2.0, got {buffer.mean_return()}"
 
   # Add another policy, causing the oldest one to be removed
-  buffer.add({"layer1": torch.tensor([4.0])}, 4.0)
+  buffer.add({"layer1": torch.tensor([4.0], device=device)}, 4.0)
   assert len(buffer.policies) == 3, f"Expected buffer size 3, got {len(buffer.policies)}"
   assert buffer.returns == [2.0, 3.0, 4.0], f"Unexpected returns list: {buffer.returns}"
 
@@ -80,7 +82,7 @@ def test_group_buffer():
   print("All GroupBuffer tests passed.")
 
 
-def test_grpo_network():
+def test_grpo_network(device="cpu"):
 
   class DummyLlamaConfig(PretrainedConfig):
     def __init__(self, vocab_size=32000, hidden_size=128, num_hidden_layers=2, num_attention_heads=2, **kwargs):
@@ -105,21 +107,21 @@ def test_grpo_network():
 
   config = DummyLlamaConfig()
   dummy_model = DummyLlamaModel(config)
-  grpo_model = GRPONetwork(dummy_model)
+  grpo_model = GRPONetwork(dummy_model, device=device)
 
   batch_size = 2
   seq_length = 5
   input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_length))
 
   output = grpo_model(input_ids)
-
   assert output.shape == (batch_size, config.vocab_size), f"Expected shape {(batch_size, config.vocab_size)}, got {output.shape}"
 
   print("Test passed: GRPONetwork produces the expected output shape.")
 
 
 if __name__ == "__main__":
+  # Choose device
+  device = "cuda" if torch.cuda.is_available() else "cpu"
 
-  test_grpo_network()
-
-  test_group_buffer()
+  test_grpo_network(device=device)
+  test_group_buffer(device=device)

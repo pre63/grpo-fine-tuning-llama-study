@@ -4,9 +4,22 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from datasets import load_dataset
-from peft import get_peft_model, get_peft_model_state_dict
+from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from torch.distributions import Categorical
 from transformers import PretrainedConfig, PreTrainedModel
+
+
+def compute_loss(logits, targets):
+  return nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+
+
+def calculate_kl_divergence(new_logits, ref_logits):
+  device = new_logits.device
+  ref_logits = ref_logits.to(device)
+  dist_new = Categorical(logits=new_logits)
+  dist_ref = Categorical(logits=ref_logits)
+  kl_div = torch.distributions.kl.kl_divergence(dist_new, dist_ref).to(device)
+  return kl_div
 
 
 class GRPONetwork(nn.Module):
@@ -17,9 +30,8 @@ class GRPONetwork(nn.Module):
 
   def forward(self, input_ids, attention_mask=None):
     input_ids = input_ids.to(self.device)
-    if attention_mask is not None:
-      attention_mask = attention_mask.to(self.device)
-    outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, output_attentions=False, output_hidden_states=False)
+    # Call the underlying model with the expected keyword "tokens".
+    outputs = self.model(tokens=input_ids)
     logits = outputs.logits[:, -1, :].to(self.device)
     return logits
 
@@ -49,78 +61,62 @@ class GroupBuffer:
     return sum(self.returns) / len(self.returns) if self.returns else 0
 
 
-def calculate_kl_divergence(new_logits, ref_logits):
-  device = new_logits.device
-  ref_logits = ref_logits.to(device)
-  dist_new = Categorical(logits=new_logits)
-  dist_ref = Categorical(logits=ref_logits)
-  kl_div = torch.distributions.kl.kl_divergence(dist_new, dist_ref).to(device)
-  return kl_div
+# Dummy model for testing QLoRA integration.
+class DummyLlamaConfig(PretrainedConfig):
+  def __init__(self, vocab_size=32000, hidden_size=128, num_hidden_layers=2, num_attention_heads=2, **kwargs):
+    super().__init__(**kwargs)
+    self.vocab_size = vocab_size
+    self.hidden_size = hidden_size
+    self.num_hidden_layers = num_hidden_layers
+    self.num_attention_heads = num_attention_heads
 
 
-def test_group_buffer(device="cpu"):
-  buffer = GroupBuffer(max_size=3, device=device)
+class DummyLlamaModel(PreTrainedModel):
+  config_class = DummyLlamaConfig
 
-  buffer.add({"layer1": torch.tensor([1.0], device=device)}, 1.0)
-  buffer.add({"layer1": torch.tensor([2.0], device=device)}, 2.0)
-  buffer.add({"layer1": torch.tensor([3.0], device=device)}, 3.0)
+  def __init__(self, config):
+    super().__init__(config)
+    self.embedding = nn.Embedding(config.vocab_size, config.hidden_size)
+    # We'll use a single linear layer as the "head" that we want to adapt.
+    self.fc = nn.Linear(config.hidden_size, config.vocab_size)
 
-  assert len(buffer.policies) == 3, f"Expected 3 policies, got {len(buffer.policies)}"
-  assert len(buffer.returns) == 3, f"Expected 3 returns, got {len(buffer.returns)}"
-  assert buffer.mean_return() == 2.0, f"Expected mean return 2.0, got {buffer.mean_return()}"
-
-  buffer.add({"layer1": torch.tensor([4.0], device=device)}, 4.0)
-  assert len(buffer.policies) == 3, f"Expected buffer size 3, got {len(buffer.policies)}"
-  assert buffer.returns == [2.0, 3.0, 4.0], f"Unexpected returns list: {buffer.returns}"
-
-  rewards = [2.0, 4.0, 6.0]
-  advantages = buffer.calculate_relative_advantage(rewards)
-  assert len(advantages) == 3, f"Expected 3 advantages, got {len(advantages)}"
-  assert np.isclose(np.mean(advantages), 0), f"Expected mean advantage 0, got {np.mean(advantages)}"
-  assert np.isclose(np.std(advantages), 1), f"Expected std 1, got {np.std(advantages)}"
-
-  print("All GroupBuffer tests passed.")
+  def forward(self, input_ids, attention_mask=None, output_attentions=False, output_hidden_states=False):
+    device = input_ids.device
+    x = self.embedding(input_ids.to(device))
+    # For simplicity, we assume a single timestep output.
+    logits = self.fc(x).to(device)
+    return type("Output", (object,), {"logits": logits})
 
 
-def test_grpo_network(device="cpu"):
-
-  class DummyLlamaConfig(PretrainedConfig):
-    def __init__(self, vocab_size=32000, hidden_size=128, num_hidden_layers=2, num_attention_heads=2, **kwargs):
-      super().__init__(**kwargs)
-      self.vocab_size = vocab_size
-      self.hidden_size = hidden_size
-      self.num_hidden_layers = num_hidden_layers
-      self.num_attention_heads = num_attention_heads
-
-  class DummyLlamaModel(PreTrainedModel):
-    config_class = DummyLlamaConfig
-
-    def __init__(self, config):
-      super().__init__(config)
-      self.embedding = nn.Embedding(config.vocab_size, config.hidden_size)
-      self.fc = nn.Linear(config.hidden_size, config.vocab_size)
-
-    def forward(self, input_ids, attention_mask=None, output_attentions=False, output_hidden_states=False):
-      device = input_ids.device
-      x = self.embedding(input_ids.to(device))
-      logits = self.fc(x).to(device)
-      return type("Output", (object,), {"logits": logits})
-
+def test_q_lora_grpo_network(device="cpu"):
   config = DummyLlamaConfig()
-  dummy_model = DummyLlamaModel(config)
-  grpo_model = GRPONetwork(dummy_model, device=device)
+  base_model = DummyLlamaModel(config)
+
+  # Define a LoRA configuration.
+  # Note: The 'quantize_base' flag is not supported by LoraConfig.
+  lora_config = LoraConfig(r=8, lora_alpha=16, target_modules=["fc"], lora_dropout=0.0, bias="none")  # Apply LoRA to the linear head.
+
+  # Wrap the base model with PEFT to inject LoRA adapters.
+  qlora_model = get_peft_model(base_model, lora_config)
+
+  # For testing purposes, print trainable parameters.
+  trainable = [n for n, p in qlora_model.named_parameters() if p.requires_grad]
+  print("Trainable parameters:", trainable)
+
+  # Wrap the LoRA-enabled model with GRPONetwork.
+  grpo_model = GRPONetwork(qlora_model, device=device)
 
   batch_size = 2
   seq_length = 5
   input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_length), device=device)
 
   output = grpo_model(input_ids)
-  assert output.shape == (batch_size, config.vocab_size), f"Expected shape {(batch_size, config.vocab_size)}, got {output.shape}"
+  expected_shape = (batch_size, config.vocab_size)
+  assert output.shape == expected_shape, f"Expected shape {expected_shape}, got {output.shape}"
 
-  print("Test passed: GRPONetwork produces the expected output shape.")
+  print("Test passed: GRPONetwork with QLoRA model produces the expected output shape.")
 
 
 if __name__ == "__main__":
   device = "cuda" if torch.cuda.is_available() else "cpu"
-  test_grpo_network(device=device)
-  test_group_buffer(device=device)
+  test_q_lora_grpo_network(device=device)

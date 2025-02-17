@@ -4,6 +4,9 @@ protobuf
 torch
 torchvision
 torchaudio
+torchao
+torchtune
+triton
 transformers
 peft
 numpy
@@ -11,6 +14,7 @@ scipy
 sentencepiece
 accelerate
 git+https://github.com/pre63/black.git
+git+https://github.com/pre63/black.git#egg=black[jupyter]
 isort
 ipykernel
 scikit-learn

@@ -310,3 +310,5 @@ TSWLatexianTemp*
 # Python
 __pycache__
 .venv
+
+pilot/.model/*

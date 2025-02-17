@@ -1,6 +1,6 @@
-train:
+tune:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python train.py
+	@. ../.venv/bin/activate && python tune.py
 
 install:
 	@python3 -m venv ../.venv
@@ -12,3 +12,4 @@ test:
 
 fix:
 	@. ../.venv/bin/activate && isort . && black .
+

@@ -1,3 +1,4 @@
+import bitsandbytes as bnb
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,7 +9,7 @@ from torch.distributions import Categorical
 from transformers import BitsAndBytesConfig, LlamaForCausalLM, LlamaTokenizer
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-device = "cpu"  # Remove this line to enable GPU
+device = "cpu"  # Remove this line to enable GPU training
 
 from network import GroupBuffer, GRPONetwork, calculate_kl_divergence
 
@@ -54,19 +55,25 @@ def train_grpo_llama():
   train_data, val_data, test_data = load_and_split_dataset()
   tokenizer = LlamaTokenizer.from_pretrained("huggyllama/llama-7b")
   tokenizer.pad_token = tokenizer.eos_token
+
   train_data = train_data.map(lambda x: tokenize_function(x, tokenizer), batched=True)
   val_data = val_data.map(lambda x: tokenize_function(x, tokenizer), batched=True)
   test_data = test_data.map(lambda x: tokenize_function(x, tokenizer), batched=True)
 
+  # BitsAndBytes 4-bit quantization configuration
   bnb_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16, llm_int8_enable_fp32_cpu_offload=True)
-  # Policy model: 4-bit quantized on GPU
-  policy_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", quantization_config=bnb_config, device_map=device)
+
+  # Load policy model with quantization
+  policy_llama = LlamaForCausalLM.from_pretrained(
+    "huggyllama/llama-7b", quantization_config=bnb_config, device_map={"": device}  # Ensure proper device mapping
+  )
+
   peft_config = LoraConfig(r=8, lora_alpha=16, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
   policy_llama = get_peft_model(policy_llama, peft_config)
   policy_model = GRPONetwork(policy_llama, device=device).eval()
 
-  # Reference model: full precision on CPU to avoid bitsandbytes errors
-  reference_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", device_map=device)
+  # Load reference model
+  reference_llama = LlamaForCausalLM.from_pretrained("huggyllama/llama-7b", device_map={"": device})
   reference_model = GRPONetwork(reference_llama, device=device).eval()
 
   ref_sd = get_peft_model_state_dict(policy_model.model)
@@ -80,6 +87,11 @@ def train_grpo_llama():
   steps_per_group = 4
   batch_size = 1
   dataset_iter = iter(train_data)
+
+  # Ensure all bnb layers are properly initialized on the device
+  for module in policy_model.modules():
+    if isinstance(module, bnb.nn.LinearFP4):
+      module.to(device)
 
   for epoch in range(epochs):
     print("New Epoch:", epoch)

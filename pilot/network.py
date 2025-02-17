@@ -25,10 +25,11 @@ class GRPONetwork(nn.Module):
 
 
 class GroupBuffer:
-  def __init__(self, max_size=5):
+  def __init__(self, max_size=5, device="cpu"):
     self.max_size = max_size
     self.policies = []
     self.returns = []
+    self.device = device
 
   def add(self, policy_state_dict, avg_return):
     if len(self.policies) >= self.max_size:

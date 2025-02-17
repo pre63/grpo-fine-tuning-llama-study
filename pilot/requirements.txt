@@ -12,3 +12,5 @@ sentencepiece
 accelerate
 git+https://github.com/pre63/black.git
 isort
+ipykernel
+scikit-learn

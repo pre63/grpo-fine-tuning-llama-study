@@ -104,8 +104,8 @@ def train_grpo_llama():
 
       with torch.no_grad():
         # Reference model on CPU
-        input_ids_ref = input_ids.to("cpu")
-        attention_mask_ref = attention_mask.to("cpu")
+        input_ids_ref = input_ids.to(device)
+        attention_mask_ref = attention_mask.to(device)
         ref_logits = reference_model(input_ids_ref, attention_mask_ref)
         logits = policy_model(input_ids, attention_mask)
 

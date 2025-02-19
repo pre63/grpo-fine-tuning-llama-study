@@ -82,6 +82,10 @@ def get_prompt_as_str(question):
 def generate_prediction(model, tokenizer, prompt, device):
   inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
   outputs = model.generate(**inputs, max_new_tokens=512)
+
+  for i, output in enumerate(outputs):
+    print(f"Output {i}: {tokenizer.decode(output, skip_special_tokens=True)}")
+
   return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 

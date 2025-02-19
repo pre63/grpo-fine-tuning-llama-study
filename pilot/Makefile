@@ -5,6 +5,7 @@ CPU = True
 # MODEL = None # Default model
 MODEL="meta-llama/Llama-3.2-1B-Instruct"
 MODEL="HF-Quantization/Llama-3.2-1B-GPTQ-INT4"
+RESUME=True
 
 tune:
 	@$(MAKE) fix
@@ -27,4 +28,4 @@ rl:
 
 eval:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python eval.py --model $(MODEL) --cpu $(CPU)
+	@. ../.venv/bin/activate && python eval.py --model $(MODEL) --cpu $(CPU) --resume $(RESUME)

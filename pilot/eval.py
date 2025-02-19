@@ -54,6 +54,11 @@ def load_model_and_tokenizer(model_id, device):
   except Exception as e:
     print(f"Error loading model '{model_id}': {e}")
     exit(1)
+
+  # Print the actual device(s) for the model parameters.
+  device_set = {str(p.device) for p in model.parameters()}
+  print("Model loaded on device(s):", device_set)
+
   tokenizer = AutoTokenizer.from_pretrained(model_id)
   if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token

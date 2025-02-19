@@ -1,7 +1,9 @@
+import argparse
+
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from trl import PPOConfig, PPOTrainer
+from trl import GRPOConfig, GRPOTrainer
 
 from data.hle import load_and_split_dataset
 
@@ -18,61 +20,36 @@ def tokenize_function(example):
   return tokens
 
 
-def compute_rewards(responses):
-  return torch.tensor([1.0] * len(responses))
+def reward_fn(prompts, completions, **kwargs):
+  return [1.0] * len(completions)
 
 
 if __name__ == "__main__":
-  cpu = True
-  device_map = "cpu" if cpu else "auto"
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--cpu", type=lambda x: x.lower() in ("true", "1", "yes"), default=False)
+  args = parser.parse_args()
+  device_map = "cpu" if args.cpu else "auto"
 
   model_id = "meta-llama/Llama-3.2-1B-Instruct"
-  print("Loading model and tokenizer...")
   model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32, device_map=device_map)
   tokenizer = AutoTokenizer.from_pretrained(model_id)
   tokenizer.pad_token = tokenizer.eos_token
 
-  print("Loading and splitting dataset...")
-  train_data, _, test_data = load_and_split_dataset(test_size=0.05, val_size=0.1)
+  train_data, val_data, test_data = load_and_split_dataset(test_size=0.05, val_size=0.1)
 
-  print("Applying chat template and tokenizing training data...")
   train_data = train_data.map(apply_chat_template)
   train_data = train_data.map(tokenize_function)
-  train_data = train_data.remove_columns(["question", "answer", "prompt"])
+  train_data = train_data.remove_columns(["question", "answer"])
 
-  print("Creating reference model...")
-  ref_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32, device_map=device_map)
+  test_data = test_data.map(apply_chat_template)
+  test_data = test_data.map(tokenize_function)
+  test_data = test_data.remove_columns(["question", "answer"])
 
-  ppo_config = PPOConfig(
-    model_name=model_id,
-    learning_rate=1e-5,
-    log_with=None,
-    batch_size=2,
-    forward_batch_size=1,
-  )
+  config = GRPOConfig(output_dir="./results", learning_rate=1e-5, per_device_train_batch_size=2, num_train_epochs=2, num_generations=2)
 
-  print("Initializing PPOTrainer...")
-  ppo_trainer = PPOTrainer(ppo_config, model, ref_model, tokenizer)
+  trainer = GRPOTrainer(model=model, reward_funcs=reward_fn, train_dataset=train_data, eval_dataset=test_data, processing_class=tokenizer, args=config)
 
-  train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=2, shuffle=True)
-
-  num_epochs = 2
-  print("Starting PPO fine-tuning...")
-  for epoch in range(num_epochs):
-    print(f"Epoch {epoch+1}/{num_epochs} started.")
-    for step, batch in enumerate(train_dataloader):
-      input_ids = batch["input_ids"]
-      attention_mask = batch["attention_mask"]
-
-      responses = model.generate(input_ids=input_ids, attention_mask=attention_mask, max_length=128)
-      rewards = compute_rewards(responses)
-
-      stats = ppo_trainer.step(input_ids, responses, rewards)
-
-      if step % 40 == 0:
-        print(f"Epoch {epoch+1}, Step {step}: {stats}")
-    print(f"Epoch {epoch+1} completed.")
-  print("PPO fine-tuning finished. Saving model and tokenizer...")
+  trainer.train()
   model.save_pretrained("./fine-tuned-model")
   tokenizer.save_pretrained("./fine-tuned-model")
   print("Model and tokenizer saved.")

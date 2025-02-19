@@ -1,3 +1,8 @@
+.PHONY: tune install test fix rl
+
+CPU = True
+MODEL = None
+
 tune:
 	@$(MAKE) fix
 	@. ../.venv/bin/activate && python tune.py
@@ -13,3 +18,10 @@ test:
 fix:
 	@. ../.venv/bin/activate && isort . && black .
 
+rl:
+	@$(MAKE) fix
+	@. ../.venv/bin/activate && python rl.py --cpu $(CPU)
+
+eval:
+	@$(MAKE) fix
+	@. ../.venv/bin/activate && python eval.py --model $(MODEL) --cpu $(CPU)

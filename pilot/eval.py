@@ -49,15 +49,15 @@ def calib_err(confidences, corrects, beta=100):
 
 
 def get_output_filename(model_name):
-  os.makedirs(".prediction", exist_ok=True)
+  os.makedirs(".predictions", exist_ok=True)
   safe_name = model_name.replace("/", "_").replace(" ", "_")
-  return os.path.join(".prediction", f"{safe_name}.json")
+  return os.path.join(".predictions", f"{safe_name}.json")
 
 
 def get_judged_filename(model_name):
-  os.makedirs(".prediction", exist_ok=True)
+  os.makedirs(".predictions", exist_ok=True)
   safe_name = model_name.replace("/", "_").replace(" ", "_")
-  return os.path.join(".prediction", f"judged_{safe_name}.json")
+  return os.path.join(".predictions", f"judged_{safe_name}.json")
 
 
 def load_model_and_tokenizer(model_id, device):
@@ -151,8 +151,8 @@ def parse_args():
   parser.add_argument(
     "--model",
     type=str,
-    default="meta-llama/Llama-3.2-1B-Instruct",
-    help="Path to a fine-tuned model or model id from HF. Use 'None' to default to meta-llama/Llama-3.2-1B-Instruct.",
+    default="HF-Quantization/Llama-3.2-1B-GPTQ-INT4",
+    help="Path to a fine-tuned model or model id from HF. Use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
   )
   parser.add_argument("--cpu", type=lambda x: x.lower() == "true", default=False, help="Force using CPU (True/False).")
   return parser.parse_args()
@@ -160,7 +160,7 @@ def parse_args():
 
 if __name__ == "__main__":
   args = parse_args()
-  default_model = "meta-llama/Llama-3.2-1B-Instruct"
+  default_model = "HF-Quantization/Llama-3.2-1B-GPTQ-INT4"
   model_id = args.model if args.model and args.model.lower() != "none" else default_model
   device = torch.device("cpu") if args.cpu else (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
 

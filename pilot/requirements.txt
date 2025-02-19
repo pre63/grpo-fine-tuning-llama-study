@@ -6,7 +6,6 @@ torchvision
 torchaudio
 torchao
 torchtune
-triton
 transformers
 peft
 numpy
@@ -18,3 +17,4 @@ git+https://github.com/pre63/black.git#egg=black[jupyter]
 isort
 ipykernel
 scikit-learn
+optimum

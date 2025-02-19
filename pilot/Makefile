@@ -1,4 +1,4 @@
-.PHONY: tune install test fix rl
+.PHONY: tune install test fix rl eval
 
 CPU = True
 MODEL = None

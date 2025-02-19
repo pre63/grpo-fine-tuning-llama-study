@@ -2,7 +2,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
-from data.hle import load_and_split_dataset
+from hle.dataset import load_and_split_dataset
 
 
 # Define a function to apply the chat template

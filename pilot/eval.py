@@ -8,44 +8,28 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# Import HLE components for consistent prompt formatting and metrics
+from hle.judge import JUDGE_PROMPT, calib_err, dump_metrics
+from hle.prediction import SYSTEM_EXACT_ANSWER, SYSTEM_MC, format_message
+
 
 def normalize_text(text):
   return text.strip().lower()
 
 
 def local_judge(question, prediction):
+  # Local judgement using exact string match on the answer.
   gt = normalize_text(question["answer"])
   pred = normalize_text(prediction)
   is_correct = "yes" if gt == pred else "no"
   confidence = 100 if is_correct == "yes" else 0
   return {
-    "extracted_final_answer": prediction,
-    "reasoning": "Local judgement: exact text match comparison.",
-    "correct": is_correct,
-    "confidence": confidence,
-    "strict": True,
+      "extracted_final_answer": prediction,
+      "reasoning": "Local judgement: exact text match comparison.",
+      "correct": is_correct,
+      "confidence": confidence,
+      "strict": True,
   }
-
-
-def calib_err(confidences, corrects, beta=100):
-  confidences = np.array(confidences)
-  corrects = np.array(corrects, dtype=float)
-  idxs = np.argsort(confidences)
-  confidences = confidences[idxs]
-  corrects = corrects[idxs]
-  n = len(confidences)
-  num_bins = n // beta if n // beta > 0 else 1
-  bins = [(i * beta, (i + 1) * beta) for i in range(num_bins)]
-  bins[-1] = (bins[-1][0], n)
-  cerr = 0.0
-  for start, end in bins:
-    if end - start == 0:
-      continue
-    bin_conf = confidences[start:end]
-    bin_corr = corrects[start:end]
-    diff = abs(np.mean(bin_conf) - np.mean(bin_corr) * 100)
-    cerr += (end - start) / n * (diff**2)
-  return math.sqrt(cerr)
 
 
 def get_output_filename(model_name):
@@ -81,30 +65,49 @@ def load_hle_dataset():
   return dataset
 
 
+def get_prompt_as_str(question):
+  # Use the imported format_message to get the prompt.
+  prompt = format_message(question)
+  if not isinstance(prompt, str):
+    if isinstance(prompt, list):
+      prompt = "\n".join(str(item) for item in prompt)
+    else:
+      prompt = str(prompt)
+  return prompt
+
+
 def generate_prediction(model, tokenizer, prompt, device):
-  inputs = tokenizer(prompt, return_tensors="pt").to(device)
-  outputs = model.generate(**inputs, max_length=512)
+  inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
+  outputs = model.generate(**inputs, max_new_tokens=512)
   return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
-def generate_predictions(model, tokenizer, questions, device, model_id):
+def generate_predictions(model, tokenizer, questions, device, model_id, resume):
   output_filepath = get_output_filename(model_id)
-  if os.path.exists(output_filepath):
-    print(f"Predictions file '{output_filepath}' exists, skipping prediction generation.")
+  predictions = {}
+  if resume and os.path.exists(output_filepath):
+    print(f"Resuming from existing predictions file '{output_filepath}'.")
     with open(output_filepath, "r") as f:
       predictions = json.load(f)
+  elif os.path.exists(output_filepath):
+    print(f"Found existing predictions file '{output_filepath}', but not resuming. Overwriting predictions.")
   else:
-    print("Generating predictions on test set...")
-    predictions = {}
-    total = len(questions)
-    for idx, question in enumerate(questions):
-      print(f"Generating prediction for question {idx+1}/{total} (id: {question['id']})...")
-      prompt = question["question"]
-      pred = generate_prediction(model, tokenizer, prompt, device)
-      predictions[question["id"]] = {"model": model_id, "response": pred}
+    print("No existing predictions file found. Starting fresh predictions.")
+
+  total = len(questions)
+  for idx, question in enumerate(questions):
+    qid = question["id"]
+    if resume and qid in predictions:
+      print(f"Skipping question {idx+1}/{total} (id: {qid}) as prediction exists.")
+      continue
+    prompt = get_prompt_as_str(question)
+    print(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
+    pred = generate_prediction(model, tokenizer, prompt, device)
+    predictions[qid] = {"model": model_id, "response": pred}
+    # Save incrementally to allow resuming if interrupted.
     with open(output_filepath, "w") as f:
       json.dump(predictions, f, indent=4)
-    print(f"Predictions saved to '{output_filepath}'.")
+  print(f"All predictions saved to '{output_filepath}'.")
   return predictions
 
 
@@ -133,28 +136,20 @@ def run_judgement(questions, predictions, model_id):
     with open(judged_filepath, "w") as f:
       json.dump(judged, f, indent=4)
     print(f"Judgement saved to '{judged_filepath}'.")
-    compute_and_print_metrics(total, corrects, confidences)
+    dump_metrics(judged, total)
   return judged
-
-
-def compute_and_print_metrics(total, corrects, confidences):
-  accuracy = round(100 * sum(corrects) / total, 2)
-  conf_half_width = round(1.96 * math.sqrt(accuracy * (100 - accuracy) / total), 2)
-  calibration_error = round(calib_err(confidences, corrects), 2)
-  print("\n*** Metrics ***")
-  print(f"Accuracy: {accuracy}% +/- {conf_half_width}% | n = {total}")
-  print(f"Calibration Error: {calibration_error}")
 
 
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument(
-    "--model",
-    type=str,
-    default="HF-Quantization/Llama-3.2-1B-GPTQ-INT4",
-    help="Path to a fine-tuned model or model id from HF. Use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
+      "--model",
+      type=str,
+      default="HF-Quantization/Llama-3.2-1B-GPTQ-INT4",
+      help="Path to a fine-tuned model or model id from HF. Use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
   )
   parser.add_argument("--cpu", type=lambda x: x.lower() == "true", default=False, help="Force using CPU (True/False).")
+  parser.add_argument("--resume", type=lambda x: x.lower() == "true", default=False, help="Resume predictions if file exists (True/False).")
   return parser.parse_args()
 
 
@@ -166,5 +161,5 @@ if __name__ == "__main__":
 
   model, tokenizer = load_model_and_tokenizer(model_id, device)
   questions = load_hle_dataset()
-  predictions = generate_predictions(model, tokenizer, questions, device, model_id)
+  predictions = generate_predictions(model, tokenizer, questions, device, model_id, args.resume)
   run_judgement(questions, predictions, model_id)

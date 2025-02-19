@@ -1,3 +1,4 @@
+wheel
 bitsandbytes
 datasets
 protobuf
@@ -18,3 +19,4 @@ isort
 ipykernel
 scikit-learn
 optimum
+auto-gptq

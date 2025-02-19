@@ -5,7 +5,7 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import GRPOConfig, GRPOTrainer
 
-from data.hle import load_and_split_dataset
+from hle.dataset import load_and_split_dataset
 
 
 def apply_chat_template(example):

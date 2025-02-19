@@ -1,7 +1,10 @@
 .PHONY: tune install test fix rl eval
 
 CPU = True
-MODEL = None
+
+# MODEL = None # Default model
+MODEL="meta-llama/Llama-3.2-1B-Instruct"
+MODEL="HF-Quantization/Llama-3.2-1B-GPTQ-INT4"
 
 tune:
 	@$(MAKE) fix

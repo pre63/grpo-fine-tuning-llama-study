@@ -24,11 +24,11 @@ def local_judge(question, prediction):
   is_correct = "yes" if gt == pred else "no"
   confidence = 100 if is_correct == "yes" else 0
   return {
-      "extracted_final_answer": prediction,
-      "reasoning": "Local judgement: exact text match comparison.",
-      "correct": is_correct,
-      "confidence": confidence,
-      "strict": True,
+    "extracted_final_answer": prediction,
+    "reasoning": "Local judgement: exact text match comparison.",
+    "correct": is_correct,
+    "confidence": confidence,
+    "strict": True,
   }
 
 
@@ -47,7 +47,10 @@ def get_judged_filename(model_name):
 def load_model_and_tokenizer(model_id, device):
   print(f"Loading model '{model_id}' on device {device}...")
   try:
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32).to(device)
+    if device.type == "cuda":
+      model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="auto", trust_remote_code=True)
+    else:
+      model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True).to(device)
   except Exception as e:
     print(f"Error loading model '{model_id}': {e}")
     exit(1)
@@ -143,10 +146,10 @@ def run_judgement(questions, predictions, model_id):
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument(
-      "--model",
-      type=str,
-      default="HF-Quantization/Llama-3.2-1B-GPTQ-INT4",
-      help="Path to a fine-tuned model or model id from HF. Use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
+    "--model",
+    type=str,
+    default="HF-Quantization/Llama-3.2-1B-GPTQ-INT4",
+    help="Path to a fine-tuned model or model id from HF. Use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
   )
   parser.add_argument("--cpu", type=lambda x: x.lower() == "true", default=False, help="Force using CPU (True/False).")
   parser.add_argument("--resume", type=lambda x: x.lower() == "true", default=False, help="Resume predictions if file exists (True/False).")

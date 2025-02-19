@@ -21,3 +21,4 @@ scikit-learn
 optimum
 auto-gptq
 jsonlines
+pydantic

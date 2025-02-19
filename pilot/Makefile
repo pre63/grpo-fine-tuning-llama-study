@@ -2,9 +2,7 @@
 
 CPU = True
 
-# MODEL = None # Default model
-MODEL="meta-llama/Llama-3.2-1B-Instruct"
-MODEL="HF-Quantization/Llama-3.2-1B-GPTQ-INT4"
+MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
 RESUME=True
 
 tune:

@@ -1,17 +1,44 @@
 import argparse
-import ast
 import json
 import math
 import os
+from typing import Literal
 
+import jsonlines
 import numpy as np
 import torch
 from datasets import load_dataset
+from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Import HLE components for consistent prompt formatting and metrics
-from hle.judge import dump_metrics, format_judge_prompt
+from hle.judge import JUDGE_PROMPT, dump_metrics, format_judge_prompt
 from hle.prediction import format_message
+
+# --- Pydantic Models for Validation ---
+
+
+class Message(BaseModel):
+  role: str
+  content: str
+
+
+class Prediction(BaseModel):
+  question_id: str
+  model: str
+  content: str  # The processed assistant's response (without system messages)
+  raw_response: str  # The full raw LLM output
+
+
+class ExtractedAnswer(BaseModel):
+  extracted_final_answer: str
+  reasoning: str
+  correct: Literal["yes", "no"]
+  confidence: int
+  strict: Literal[True]
+
+
+# --- Basic Helpers ---
 
 
 def normalize_text(text):
@@ -61,40 +88,51 @@ def load_hle_dataset():
   return dataset
 
 
-def get_prompt_as_str(question):
-  prompt = format_message(question)
-  if not isinstance(prompt, str):
-    if isinstance(prompt, list):
-      prompt = "\n".join(str(item) for item in prompt)
-    else:
-      prompt = str(prompt)
-  return prompt
+def prompt_as_str(question):
+  msg = format_message(question)
+  return msg if isinstance(msg, str) else "\n".join(map(str, msg))
 
 
-def generate_prediction(model, tokenizer, prompt, device, max_new_tokens=8192):
-  # Do not truncate the prompt; send it in full
-  inputs = tokenizer(prompt, return_tensors="pt", truncation=False).to(device)
-  outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-  for i, output in enumerate(outputs):
-    print(f"Output {i}: {tokenizer.decode(output, skip_special_tokens=True)}")
-  return tokenizer.decode(outputs[0], skip_special_tokens=True)
+# --- Composable Prediction Functions ---
+
+
+def encode_prompt(prompt, tokenizer, device):
+  return tokenizer(prompt, return_tensors="pt", truncation=False).to(device)
+
+
+def generate_raw_output(model, inputs, max_new_tokens):
+  return model.generate(**inputs, max_new_tokens=max_new_tokens)
+
+
+def decode_outputs(outputs, tokenizer):
+  return [tokenizer.decode(o, skip_special_tokens=True) for o in outputs]
 
 
 def process_prediction_output(prediction_str):
   """
-    Given the model's raw prediction string (which contains multiple messages in a string format),
-    parse it into individual messages, skip those with role 'system', and return the concatenated content.
+    Given the raw prediction string in NDJSON format (one JSON object per line),
+    use jsonlines to iterate over each JSON object, validate with the Message model,
+    and return the concatenated content for messages whose role is not 'system'.
     """
   messages = []
-  for line in prediction_str.strip().splitlines():
+  for obj in jsonlines.Reader(prediction_str.splitlines()):
     try:
-      msg = ast.literal_eval(line.strip())
-      if isinstance(msg, dict) and "role" in msg and "content" in msg:
-        if msg["role"].lower() != "system":
-          messages.append(msg["content"])
+      msg = Message.model_validate(obj)
+      if msg.role.lower() != "system":
+        messages.append(msg.content)
     except Exception as e:
-      print("Failed to parse line:", line, "Error:", e)
+      print("Validation error for message:", e)
   return "\n".join(messages).strip()
+
+
+def compose_prediction(model, tokenizer, prompt, device, max_new_tokens=8192):
+  inputs = encode_prompt(prompt, tokenizer, device)
+  raw_outputs = generate_raw_output(model, inputs, max_new_tokens)
+  decoded = decode_outputs(raw_outputs, tokenizer)
+  return decoded[0]
+
+
+# --- Prediction & Judge Pipeline ---
 
 
 def generate_predictions(model, tokenizer, questions, device, model_id, resume):
@@ -103,7 +141,12 @@ def generate_predictions(model, tokenizer, questions, device, model_id, resume):
   if resume and os.path.exists(output_filepath):
     print(f"Resuming from existing predictions file '{output_filepath}'.")
     with open(output_filepath, "r") as f:
-      predictions = json.load(f)
+      data = json.load(f)
+      for k, v in data.items():
+        try:
+          predictions[k] = Prediction.model_validate(v).model_dump()
+        except Exception as e:
+          print(f"Prediction validation error for id {k}:", e)
   elif os.path.exists(output_filepath):
     print(f"Found existing predictions file '{output_filepath}', but not resuming. Overwriting predictions.")
   else:
@@ -115,23 +158,65 @@ def generate_predictions(model, tokenizer, questions, device, model_id, resume):
     if resume and qid in predictions:
       print(f"Skipping question {idx+1}/{total} (id: {qid}) as prediction exists.")
       continue
-    prompt = get_prompt_as_str(question)
+    prompt = prompt_as_str(question)
     print(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
-    raw_pred = generate_prediction(model, tokenizer, prompt, device, max_new_tokens=8192)
-
-    # Process the raw prediction: skip messages we sent, extract the content.
-    pred = process_prediction_output(raw_pred)
-    predictions[qid] = {"model": model_id, "response": pred}
+    raw_pred = compose_prediction(model, tokenizer, prompt, device, max_new_tokens=8192)
+    content = process_prediction_output(raw_pred)
+    predictions[qid] = Prediction(question_id=qid, model=model_id, content=content, raw_response=raw_pred).model_dump()
     with open(output_filepath, "w") as f:
       json.dump(predictions, f, indent=4)
   print(f"All predictions saved to '{output_filepath}'.")
   return predictions
 
 
-def judge(question, prediction, model, tokenizer, device):
-  judge_prompt = format_judge_prompt(question=question["question"], answer=question["answer"], response=prediction)
-  judge_output = generate_prediction(model, tokenizer, judge_prompt, device, max_new_tokens=4096)
-  return judge_output
+def parse_judge_text(text: str) -> dict:
+  """
+    Parse a text block containing lines in the form "key: value" and return a dict.
+    """
+  result = {}
+  for line in text.splitlines():
+    if ":" in line:
+      key, value = line.split(":", 1)
+      result[key.strip()] = value.strip()
+  return result
+
+
+def extract_judge_answer(question_text, correct_answer, response, model, tokenizer, device):
+  judge_prompt = JUDGE_PROMPT.format(question=question_text, correct_answer=correct_answer, response=response)
+  raw_judge = compose_prediction(model, tokenizer, judge_prompt, device, max_new_tokens=4096)
+
+  # If the model merely echoes the prompt, return a default null answer.
+  if raw_judge.strip() == judge_prompt.strip():
+    print("Judge output identical to prompt; returning default null answer.")
+    return {
+      "extracted_final_answer": "None",
+      "reasoning": "",
+      "correct": "no",
+      "confidence": 0,
+      "strict": True,
+    }
+
+  # Use composition: first parse the raw text into key/value pairs.
+  parsed = parse_judge_text(raw_judge)
+  try:
+    extracted = ExtractedAnswer.model_validate(parsed)
+    return {
+      "correct_answer": correct_answer,
+      "model_answer": extracted.extracted_final_answer,
+      "reasoning": extracted.reasoning,
+      "correct": extracted.correct,
+      "confidence": extracted.confidence,
+    }
+  except Exception as e:
+    print("Failed to validate judge output:", e)
+    judged_correct = "yes" if "yes" in raw_judge.lower() else "no"
+    return {
+      "correct_answer": correct_answer,
+      "model_answer": raw_judge,
+      "reasoning": "Fallback: could not parse judge output.",
+      "correct": judged_correct,
+      "confidence": 100,
+    }
 
 
 def judge_predictions(dataset, predictions, model, tokenizer, device, model_id):
@@ -140,7 +225,12 @@ def judge_predictions(dataset, predictions, model, tokenizer, device, model_id):
   if os.path.exists(judged_filepath):
     print(f"Found existing judged file '{judged_filepath}'. Resuming judgement.")
     with open(judged_filepath, "r") as f:
-      judged = json.load(f)
+      data = json.load(f)
+      for k, v in data.items():
+        try:
+          judged[k] = JudgedPrediction.model_validate(v).model_dump()
+        except Exception as e:
+          print(f"Judged prediction validation error for id {k}:", e)
   else:
     print("No judged file found. Starting fresh judgement.")
 
@@ -152,16 +242,18 @@ def judge_predictions(dataset, predictions, model, tokenizer, device, model_id):
     if qid in judged:
       print(f"Skipping question {idx+1}/{total} (id: {qid}) as already judged.")
       continue
-    response = predictions[qid]["response"]
+    response = predictions[qid]["content"]
     print(f"Judging question {idx+1}/{total} (id: {qid})...")
-    judge_out = judge(question, response, model, tokenizer, device)
-
-    # For simplicity, we assume if judge_out contains "yes" (case-insensitive) it's correct.
-    judged_correct = "yes" if "yes" in judge_out.lower() else "no"
-    judged[qid] = {"model": model_id, "response": response, "judge_response": judge_out, "judged_correct": judged_correct}
-
-    # Save judgements incrementally.
-
+    judge_result = extract_judge_answer(
+      question_text=question["question"], correct_answer=question["answer"], response=response, model=model, tokenizer=tokenizer, device=device
+    )
+    judged[qid] = JudgedPrediction(
+      extracted_final_answer=judge_result["extracted_final_answer"],
+      reasoning=judge_result["reasoning"],
+      correct=judge_result["correct"],
+      confidence=judge_result["confidence"],
+      strict=True,
+    ).model_dump()
     with open(judged_filepath, "w") as f:
       json.dump(judged, f, indent=4)
   print(f"All judgement results saved to '{judged_filepath}'.")
@@ -175,7 +267,7 @@ def parse_args():
     "--model",
     type=str,
     default="HF-Quantization/Llama-3.2-1B-GPTQ-INT4",
-    help="Path to a fine-tuned model or model id from HF. Use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
+    help="Model id or path; use 'None' to default to HF-Quantization/Llama-3.2-1B-GPTQ-INT4.",
   )
   parser.add_argument("--cpu", type=lambda x: x.lower() == "true", default=False, help="Force using CPU (True/False).")
   parser.add_argument("--resume", type=lambda x: x.lower() == "true", default=False, help="Resume predictions if file exists (True/False).")

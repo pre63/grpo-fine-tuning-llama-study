@@ -106,3 +106,8 @@ def dump_metrics(predictions, n):
   print("*** Metrics ***")
   print(f"Accuracy: {accuracy}% +/- {confidence_half_width}% | n = {n}")
   print(f"Calibration Error: {calibration_error}")
+
+
+def format_judge_prompt(question, answer, prediction):
+  judge_prompt = JUDGE_PROMPT.format(question=question, correct_answer=answer, response=prediction)
+  return judge_prompt

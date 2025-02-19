@@ -1,100 +1,71 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
-from torchtune.models.llama3 import llama3_tokenizer
-from torchtune.models.llama3_2 import llama3_2_1b
-from torchtune.modules.peft import get_adapter_params, set_trainable_params
-from torchtune.training.quantization import Int4WeightOnlyQATQuantizer
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
-from data.hle import get_train_loader, load_and_split_dataset, tokenize_batch
-from network import GRPONetwork, compute_loss
+from data.hle import load_and_split_dataset
 
-# Hyperparameters
 
-batch_size = 2
-num_epochs = 3
-learning_rate = 1e-4
-max_seq_len = 131072
-shuffle_data = True
+# Define a function to apply the chat template
+def apply_chat_template(example):
+  messages = [{"role": "user", "content": example["question"]}, {"role": "assistant", "content": example["answer"]}]
+  prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+  return {"prompt": prompt}
 
-lora_ran = 8
-lora_alpha = 16
-lora_dropout = 0.0
-target_modules = ["q_proj", "v_proj"]
 
-tokenizer_path = ".model/Llama-3.2-1B/tokenizer.model"
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# Tokenize the data
+def tokenize_function(example):
+  tokens = tokenizer(example["prompt"], padding="max_length", truncation=True, max_length=128)
+  # Set padding token labels to -100 to ignore them in loss calculation
+  tokens["labels"] = [-100 if token == tokenizer.pad_token_id else token for token in tokens["input_ids"]]
+  return tokens
 
 
 if __name__ == "__main__":
-  print("Loading dataset...")
+
+  # Load the base model and tokenizer
+  model_id = "meta-llama/Llama-3.2-1B-Instruct"
+  model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32, device_map="auto")  # Must be float32 for MacBooks!
+  tokenizer = AutoTokenizer.from_pretrained(model_id)
+  tokenizer.pad_token = tokenizer.eos_token
+
   train_data, val_data, test_data = load_and_split_dataset()
-  tokenizer = llama3_tokenizer(path=tokenizer_path)
-  train_data = train_data.map(tokenize_batch(tokenizer), batched=True)
-  train_data.set_format(type="torch", columns=["input_ids", "attention_mask"])
-  train_loader = get_train_loader(train_data, tokenizer, batch_size=batch_size, shuffle=shuffle_data, max_seq_len=max_seq_len)
-  print("Dataset loaded.")
 
-  print("Preparing base model...")
-  base_model = llama3_2_1b().to(device)
+  # Apply the chat template function to the dataset
+  train_data = train_data.map(apply_chat_template)
+  train_data = train_data.map(tokenize_function)
 
-  quantizer = Int4WeightOnlyQATQuantizer(groupsize=256, inner_k_tiles=8, precision=torch.bfloat16, scales_precision=torch.bfloat16)
-  base_model = quantizer.prepare(base_model)
+  test_data = test_data.map(apply_chat_template)
+  test_data = test_data.map(tokenize_function)
 
-  if hasattr(base_model, "gradient_checkpointing_enable"):
-    base_model.gradient_checkpointing_enable()
-  print("Base model ready.")
+  # Apply tokenize_function to each row
+  tokenized_dataset = test_data.map(tokenize_function)
+  tokenized_dataset = tokenized_dataset.remove_columns(["question", "answer", "prompt"])
 
-  print("Injecting LoRA adapters...")
-  lora_config = LoraConfig(r=lora_ran, lora_alpha=lora_alpha, target_modules=target_modules, lora_dropout=lora_dropout, bias="none")
-  qlora_model = get_peft_model(base_model, lora_config)
-  set_trainable_params(qlora_model, get_adapter_params(qlora_model))
-  print("LoRA adapters injected.")
-
-  print("Wrapping model for training...")
-  model = GRPONetwork(qlora_model, device=device)
-
-  adapter_params = [p for n, p in model.named_parameters() if p.requires_grad]
-  if not adapter_params:
-    for name, p in model.named_parameters():
-      if "lora" in name:
-        p.requires_grad = True
-        adapter_params.append(p)
-  if not adapter_params:
-    raise ValueError("No trainable parameters found! Check target_modules in LoraConfig.")
-  print(f"Number of trainable parameters: {sum(p.numel() for p in adapter_params)}")
-
-  optimizer = optim.Adam(adapter_params, lr=learning_rate)
-  scaler = torch.amp.GradScaler(device=device)
-
-  print("Starting training...")
+  # Define training arguments
   model.train()
+  training_args = TrainingArguments(
+    output_dir="./results",
+    eval_strategy="steps",  # To evaluate during training
+    eval_steps=40,
+    logging_steps=40,
+    save_steps=150,
+    per_device_train_batch_size=2,  # Adjust based on your hardware
+    per_device_eval_batch_size=2,
+    num_train_epochs=2,  # How many times to loop through the dataset
+    fp16=False,  # Must be False for MacBooks
+    report_to="none",  # Here we can use something like tensorboard to see the training metrics
+    log_level="info",
+    learning_rate=1e-5,  # Would avoid larger values here
+    max_grad_norm=2,  # Clipping the gradients is always a good idea
+    use_cpu=True,  # Must be True for MacBooks
+  )
 
-  for epoch in range(num_epochs):
-    print(f"Epoch {epoch+1}/{num_epochs}")
-    epoch_loss = 0.0
-    batch_count = 0
+  # Initialize Trainer
+  trainer = Trainer(model=model, args=training_args, train_dataset=train_data, eval_dataset=test_data, tokenizer=tokenizer)
 
-    for batch in train_loader:
+  # Train the model
+  trainer.train()
 
-      input_ids = batch["input_ids"].to(device)
-      optimizer.zero_grad()
-
-      with torch.autocast(device_type=device):
-        logits = model(input_ids)
-        targets = input_ids[:, 1:]
-        pred_logits = logits[:, :-1, :]
-        loss = compute_loss(pred_logits, targets)
-      scaler.scale(loss).backward()
-      scaler.step(optimizer)
-      scaler.update()
-      epoch_loss += loss.item()
-      batch_count += 1
-    avg_loss = epoch_loss / batch_count if batch_count > 0 else float("inf")
-    print(f"Epoch {epoch+1}/{num_epochs}: Average Loss: {avg_loss:.4f}")
-  print("Training complete.")
-
-  print("Converting model to quantized version...")
-  quantized_base = quantizer.convert(base_model)
-  print("Quantization complete.")
+  # Save the model and tokenizer
+  trainer.save_model("./fine-tuned-model")
+  tokenizer.save_pretrained("./fine-tuned-model")

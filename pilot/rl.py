@@ -1,6 +1,7 @@
 import argparse
 import base64
 import io
+import os
 
 import torch
 from peft import LoraConfig, get_peft_model
@@ -10,6 +11,9 @@ from transformers import MllamaForConditionalGeneration, MllamaProcessor, TorchA
 from trl import GRPOConfig, GRPOTrainer
 
 from hle.dataset import load_and_split_dataset
+
+# Set PyTorch memory optimization
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 processor = None
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
@@ -57,7 +61,9 @@ def tokenize_function(example):
     }
   )
   prompt = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-  tokens = processor(text=prompt, images=images if images else None, padding="max_length", truncation=True, max_length=128, return_tensors="pt")
+  tokens = processor(
+    text=prompt, images=images if images else None, padding="max_length", truncation=True, max_length=64, return_tensors="pt"  # Reduced from 128
+  )
   input_ids = tokens["input_ids"][0].tolist()
   labels = [-100 if token == processor.tokenizer.pad_token_id else token for token in input_ids]
   return {"input_ids": input_ids, "labels": labels, "answer": example["answer"]}
@@ -90,7 +96,7 @@ if __name__ == "__main__":
   print(f"Using device_map: {device_map}")
 
   model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-  lora_config = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
+  lora_config = LoraConfig(r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")  # Reduced from 16
 
   if use_cuda or use_mps:
     quantization_config = TorchAoConfig(quant_type="int4_weight_only", group_size=128)
@@ -119,11 +125,11 @@ if __name__ == "__main__":
   config_args = {
     "output_dir": "./results",
     "learning_rate": 1e-4,
-    "per_device_train_batch_size": 2,
+    "per_device_train_batch_size": 1,  # Reduced to 1
     "num_train_epochs": 2,
-    "num_generations": 2,
-    "max_prompt_length": 128,
-    "max_completion_length": 128,
+    "num_generations": 1,  # Reduced to 1
+    "max_prompt_length": 64,  # Reduced from 128
+    "max_completion_length": 64,  # Reduced from 128
     "temperature": 0.7,
     "beta": 0.1,
     "remove_unused_columns": False,

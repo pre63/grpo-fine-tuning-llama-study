@@ -118,9 +118,9 @@ def get_config() -> GRPOConfig:
   return GRPOConfig(
     output_dir="./results",
     learning_rate=1e-4,
-    per_device_train_batch_size=1,
+    per_device_train_batch_size=2,
     num_train_epochs=2,
-    num_generations=1,
+    num_generations=2,
     max_prompt_length=32,
     max_completion_length=32,
     temperature=0.7,

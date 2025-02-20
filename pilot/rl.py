@@ -12,8 +12,12 @@ from trl import GRPOConfig, GRPOTrainer
 
 from hle.dataset import load_and_split_dataset
 
-# Set PyTorch memory optimization
+# Set PyTorch memory optimization globally
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+# Clear GPU memory before starting
+if torch.cuda.is_available():
+  torch.cuda.empty_cache()
 
 processor = None
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
@@ -61,9 +65,7 @@ def tokenize_function(example):
     }
   )
   prompt = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-  tokens = processor(
-    text=prompt, images=images if images else None, padding="max_length", truncation=True, max_length=64, return_tensors="pt"  # Reduced from 128
-  )
+  tokens = processor(text=prompt, images=images if images else None, padding="max_length", truncation=True, max_length=32, return_tensors="pt")  # Reduced to 32
   input_ids = tokens["input_ids"][0].tolist()
   labels = [-100 if token == processor.tokenizer.pad_token_id else token for token in input_ids]
   return {"input_ids": input_ids, "labels": labels, "answer": example["answer"]}
@@ -89,14 +91,13 @@ if __name__ == "__main__":
   parser.add_argument("--cpu", type=lambda x: x.lower() in ("true", "1", "yes"), default=False)
   args = parser.parse_args()
 
-  # Prioritize CUDA, then MPS, then CPU
   use_cuda = torch.cuda.is_available() and not args.cpu
   use_mps = torch.backends.mps.is_available() and not args.cpu and not use_cuda
   device_map = "cuda" if use_cuda else ("mps" if use_mps else "cpu")
   print(f"Using device_map: {device_map}")
 
   model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-  lora_config = LoraConfig(r=8, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")  # Reduced from 16
+  lora_config = LoraConfig(r=2, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")  # Reduced to 2
 
   if use_cuda or use_mps:
     quantization_config = TorchAoConfig(quant_type="int4_weight_only", group_size=128)
@@ -125,11 +126,11 @@ if __name__ == "__main__":
   config_args = {
     "output_dir": "./results",
     "learning_rate": 1e-4,
-    "per_device_train_batch_size": 1,  # Reduced to 1
+    "per_device_train_batch_size": 1,
     "num_train_epochs": 2,
-    "num_generations": 1,  # Reduced to 1
-    "max_prompt_length": 64,  # Reduced from 128
-    "max_completion_length": 64,  # Reduced from 128
+    "num_generations": 1,
+    "max_prompt_length": 32,  # Reduced to 32
+    "max_completion_length": 32,  # Reduced to 32
     "temperature": 0.7,
     "beta": 0.1,
     "remove_unused_columns": False,

@@ -18,11 +18,14 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")  # Lightweight model for embe
 def apply_chat_template(example):
   conversation = []
   if example.get("image", "").strip():
+    # Decode base64 string to PIL Image
+    image_data = base64.b64decode(example["image"])
+    image = PIL_Image.open(io.BytesIO(image_data)).convert("RGB")
     conversation.append(
       {
         "role": "user",
         "content": [
-          {"type": "image", "data": example["image"]},
+          {"type": "image", "data": image},  # Pass PIL Image
           {"type": "text", "text": example["question"]},
         ],
       }
@@ -41,7 +44,7 @@ def apply_chat_template(example):
     }
   )
   prompt = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-  return {"prompt": prompt, "answer": example["answer"]}  # Keep answer
+  return {"prompt": prompt, "answer": example["answer"]}
 
 
 def tokenize_function(example):

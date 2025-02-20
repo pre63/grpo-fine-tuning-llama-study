@@ -117,19 +117,23 @@ def process_prediction_output(prediction_str):
     """
   with open("output.txt", "w") as f:
     f.write(prediction_str)
+  try:
+    messages = []
+    for obj in jsonlines.Reader(prediction_str.splitlines()):
+      try:
+        msg = Message.model_validate(obj)
 
-  messages = []
-  for obj in jsonlines.Reader(prediction_str.splitlines()):
-    try:
-      msg = Message.model_validate(obj)
+        if msg.role.lower() != "system":
+          messages.append(msg.content)
 
-      if msg.role.lower() != "system":
-        messages.append(msg.content)
+      except Exception as e:
+        print("Validation error for message:", e)
 
-    except Exception as e:
-      print("Validation error for message:", e)
+    return "\n".join(messages).strip()
 
-  return "\n".join(messages).strip()
+  except Exception as e:
+    print("Error processing prediction output:", e)
+    return "Failed to process prediction output."
 
 
 def compose_prediction(model, tokenizer, prompt, device, max_new_tokens=8192):

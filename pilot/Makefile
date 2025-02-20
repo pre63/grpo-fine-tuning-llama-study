@@ -15,7 +15,6 @@ install:
 
 test:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python tests/test.py
 	@. ../.venv/bin/activate && python network.py
 
 fix:

@@ -8,7 +8,7 @@ import torch
 from peft import LoraConfig, get_peft_model
 from PIL import Image as PIL_Image
 from sentence_transformers import SentenceTransformer, util
-from transformers import AutoModelForCausalLM, AutoTokenizer, MllamaForConditionalGeneration, MllamaProcessor, TorchAoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, MllamaForConditionalGeneration, MllamaProcessor
 from trl import GRPOConfig, GRPOTrainer
 
 from hle.dataset import load_and_split_dataset
@@ -79,7 +79,7 @@ def get_device_map(cpu: bool) -> str:
 
 def load_model_and_processor(model_id: str, device_map: str) -> tuple:
   is_vision_model = "vision" in model_id.lower()
-  quantization_config = TorchAoConfig(quant_type="int4_weight_only", group_size=128)
+  quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
   model_class = MllamaForConditionalGeneration if is_vision_model else AutoModelForCausalLM
   processor_class = MllamaProcessor if is_vision_model else AutoTokenizer
 
@@ -93,7 +93,7 @@ def load_model_and_processor(model_id: str, device_map: str) -> tuple:
   processor = processor_class.from_pretrained(model_id)
 
   if device_map not in ["cuda", "mps"]:
-    print("Warning: QLoRA with int4_weight_only requires GPU/MPS. Using float16 + LoRA on CPU.")
+    print("Warning: QLoRA with bitsandbytes requires GPU/MPS. Using float16 + LoRA on CPU.")
 
   if hasattr(processor, "tokenizer"):
     if processor.tokenizer.pad_token is None:

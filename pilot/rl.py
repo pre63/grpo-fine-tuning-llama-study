@@ -71,13 +71,18 @@ def compute_reward(prompts: List[str], completions: List[str], ground_truths: Li
   return rewards
 
 
-def get_device_map(cpu: bool) -> str:
+def get_device_map(cpu: bool) -> Union[str, Dict[str, int]]:
   use_cuda = torch.cuda.is_available() and not cpu
   use_mps = torch.backends.mps.is_available() and not cpu and not use_cuda
-  return "cuda" if use_cuda else "mps" if use_mps else "cpu"
+  if use_cuda:
+    return {"": 0}  # Explicitly cuda:0
+  elif use_mps:
+    return "mps"
+  else:
+    return "cpu"
 
 
-def load_model_and_processor(model_id: str, device_map: str) -> tuple:
+def load_model_and_processor(model_id: str, device_map: Union[str, Dict[str, int]]) -> tuple:
   is_vision_model = "vision" in model_id.lower()
   quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
   model_class = MllamaForConditionalGeneration if is_vision_model else AutoModelForCausalLM
@@ -85,14 +90,14 @@ def load_model_and_processor(model_id: str, device_map: str) -> tuple:
 
   model = model_class.from_pretrained(
     model_id,
-    torch_dtype=torch.bfloat16 if device_map in ["cuda", "mps"] else torch.float16,
+    torch_dtype=torch.bfloat16 if isinstance(device_map, dict) or device_map == "mps" else torch.float16,
     device_map=device_map,
-    quantization_config=quantization_config if device_map in ["cuda", "mps"] else None,
+    quantization_config=quantization_config if isinstance(device_map, dict) or device_map == "mps" else None,
     trust_remote_code=True,
   )
   processor = processor_class.from_pretrained(model_id)
 
-  if device_map not in ["cuda", "mps"]:
+  if device_map == "cpu":
     print("Warning: QLoRA with bitsandbytes requires GPU/MPS. Using float16 + LoRA on CPU.")
 
   if hasattr(processor, "tokenizer"):

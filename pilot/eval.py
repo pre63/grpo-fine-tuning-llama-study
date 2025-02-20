@@ -84,6 +84,7 @@ def load_model_and_tokenizer(model_id, device):
 def load_hle_dataset():
   print("Loading HLE test dataset...")
   dataset = load_dataset("cais/hle", split="test")
+  dataset = dataset.filter(lambda x: x["image"] == "")
   print(f"Loaded {len(dataset)} questions from HLE test dataset.")
   return dataset
 
@@ -116,6 +117,7 @@ def process_prediction_output(prediction_str):
     """
   with open("output.txt", "w") as f:
     f.write(prediction_str)
+
   messages = []
   for obj in jsonlines.Reader(prediction_str.splitlines()):
     try:
@@ -123,8 +125,10 @@ def process_prediction_output(prediction_str):
 
       if msg.role.lower() != "system":
         messages.append(msg.content)
+
     except Exception as e:
       print("Validation error for message:", e)
+
   return "\n".join(messages).strip()
 
 

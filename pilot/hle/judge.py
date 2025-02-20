@@ -98,6 +98,9 @@ def dump_metrics(predictions, n):
   if len(correct) != n:
     print(f"Available predictions: {len(correct)} | Total questions: {n}")
 
+  if n == 0:
+    print("No predictions to evaluate")
+    return
   accuracy = round(100 * sum(correct) / n, 2)
   # Wald estimator, 95% confidence interval
   confidence_half_width = round(1.96 * math.sqrt(accuracy * (100 - accuracy) / n), 2)

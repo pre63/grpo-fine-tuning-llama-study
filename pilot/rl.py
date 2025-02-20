@@ -86,7 +86,16 @@ if __name__ == "__main__":
   model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
   model = MllamaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float32, device_map=device_map, trust_remote_code=True)
   processor = MllamaProcessor.from_pretrained(model_id)
-  processor.pad_token = processor.eos_token
+
+  # Access the underlying tokenizer and set pad_token
+  if hasattr(processor, "tokenizer"):
+    if processor.tokenizer.pad_token is None:
+      # Use bos_token if pad_token isn’t set, or a default like "<pad>"
+      processor.tokenizer.pad_token = processor.tokenizer.bos_token or "<pad>"
+    processor.pad_token = processor.tokenizer.pad_token
+  else:
+    # Fallback: set a default pad_token directly
+    processor.pad_token = "<pad>"
 
   train_data, val_data, test_data = load_and_split_dataset(test_size=0.05, val_size=0.1)
 

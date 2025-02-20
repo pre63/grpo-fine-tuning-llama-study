@@ -5,11 +5,10 @@ import os
 from typing import Dict, List, Optional, Union
 
 import torch
-from auto_gptq import AutoGPTQForCausalLM
 from peft import LoraConfig, get_peft_model
 from PIL import Image as PIL_Image
 from sentence_transformers import SentenceTransformer, util
-from transformers import AutoTokenizer, MllamaForConditionalGeneration, MllamaProcessor
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, MllamaForConditionalGeneration, MllamaProcessor
 from trl import GRPOConfig, GRPOTrainer
 
 from hle.dataset import load_and_split_dataset
@@ -80,32 +79,30 @@ def get_device_map(cpu: bool) -> str:
 
 def load_model_and_processor(model_id: str, device_map: str) -> tuple:
   is_vision_model = "vision" in model_id.lower()
+  quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
+  model_class = MllamaForConditionalGeneration if is_vision_model else AutoModelForCausalLM
   processor_class = MllamaProcessor if is_vision_model else AutoTokenizer
 
-  if is_vision_model:
-    # Vision model: fallback to float16 + LoRA since AutoGPTQ doesn’t support Mllama yet
-    print("Warning: AutoGPTQ doesn’t support vision models. Using float16 + LoRA for vision model.")
-    model = MllamaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, device_map=device_map, trust_remote_code=True)
-    processor = processor_class.from_pretrained(model_id)
-    if hasattr(processor, "tokenizer"):
-      if processor.tokenizer.pad_token is None:
-        processor.tokenizer.pad_token = processor.tokenizer.bos_token or "<pad>"
-      processor.tokenizer.pad_token_id = processor.tokenizer.convert_tokens_to_ids(processor.tokenizer.pad_token)
-      processor.pad_token = processor.tokenizer.pad_token
-      processor.pad_token_id = processor.tokenizer.pad_token_id
-  else:
-    # Text-only model: use AutoGPTQ with 4-bit quantization
-    model = AutoGPTQForCausalLM.from_quantized(
-      "TheBloke/Llama-3.2-1B-Instruct-GPTQ" if "Llama-3.2-1B-Instruct" in model_id else model_id,
-      device_map=device_map,
-      use_safetensors=True,
-      trust_remote_code=True,
-      torch_dtype=torch.float16,
-      use_cuda_fp16=True,
-    )
-    processor = processor_class.from_pretrained(model_id)
-    if processor.pad_token is None:
-      processor.pad_token = processor.bos_token or "<pad>"
+  model = model_class.from_pretrained(
+    model_id,
+    torch_dtype=torch.bfloat16 if device_map in ["cuda", "mps"] else torch.float16,
+    device_map=device_map,
+    quantization_config=quantization_config if device_map in ["cuda", "mps"] else None,
+    trust_remote_code=True,
+  )
+  processor = processor_class.from_pretrained(model_id)
+
+  if device_map not in ["cuda", "mps"]:
+    print("Warning: QLoRA with bitsandbytes requires GPU/MPS. Using float16 + LoRA on CPU.")
+
+  if hasattr(processor, "tokenizer"):
+    if processor.tokenizer.pad_token is None:
+      processor.tokenizer.pad_token = processor.tokenizer.bos_token or "<pad>"
+    processor.tokenizer.pad_token_id = processor.tokenizer.convert_tokens_to_ids(processor.tokenizer.pad_token)
+    processor.pad_token = processor.tokenizer.pad_token
+    processor.pad_token_id = processor.tokenizer.pad_token_id
+  elif processor.pad_token is None:
+    processor.pad_token = processor.bos_token or "<pad>"
     processor.pad_token_id = processor.convert_tokens_to_ids(processor.pad_token)
 
   processor.model_name = model_id

@@ -1,24 +1,25 @@
 wheel
-bitsandbytes
+
+isort
+black @ git+https://github.com/pre63/black.git
+black[jupyter] @ git+https://github.com/pre63/black.git
+
+accelerate
 datasets
+ipykernel
+jsonlines
+numpy
+peft
 protobuf
+pydantic
+scikit-learn
+scipy
+sentence-transformers
+sentencepiece
 torch
-torchvision
 torchaudio
 torchao
 torchtune
+torchvision
 transformers
-peft
-numpy
-scipy
-sentencepiece
-accelerate
-git+https://github.com/pre63/black.git
-git+https://github.com/pre63/black.git#egg=black[jupyter]
-isort
-ipykernel
-scikit-learn
-optimum
-auto-gptq
-jsonlines
-pydantic
+trl @ git+https://github.com/huggingface/trl.git@main

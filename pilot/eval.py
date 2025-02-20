@@ -1,4 +1,6 @@
 import argparse
+import base64
+import io
 import json
 import os
 from typing import Literal
@@ -6,14 +8,12 @@ from typing import Literal
 import jsonlines
 import torch
 from datasets import load_dataset
+from PIL import Image as PIL_Image
 from pydantic import BaseModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import MllamaForConditionalGeneration, MllamaProcessor
 
-# Import HLE components for consistent prompt formatting and metrics
 from hle.judge import JUDGE_PROMPT, dump_metrics, format_judge_prompt
 from hle.prediction import format_message
-
-# --- Pydantic Models for Validation ---
 
 
 class Message(BaseModel):
@@ -24,8 +24,8 @@ class Message(BaseModel):
 class Prediction(BaseModel):
   question_id: str
   model: str
-  content: str  # The processed assistant's response (without system messages)
-  raw_response: str  # The full raw LLM output
+  content: str
+  raw_response: str
 
 
 class ExtractedAnswer(BaseModel):
@@ -34,9 +34,6 @@ class ExtractedAnswer(BaseModel):
   correct: Literal["yes", "no"]
   confidence: int
   strict: Literal[True]
-
-
-# --- Basic Helpers ---
 
 
 def normalize_text(text):
@@ -55,36 +52,27 @@ def get_judged_filename(model_name):
   return os.path.join(".predictions", f"judged_{safe_name}.json")
 
 
-def load_model_and_tokenizer(model_id, device):
-  print(f"Loading model '{model_id}' on device {device}...")
+def load_model_and_processor(model_id, device):
+  print(f"Loading vision model '{model_id}' on device {device}...")
   try:
-
     if device.type == "cuda":
-      model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="auto", trust_remote_code=True)
-
+      model = MllamaForConditionalGeneration.from_pretrained(model_id, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True)
     else:
-      model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True).to(device)
+      model = MllamaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.bfloat16, trust_remote_code=True).to(device)
   except Exception as e:
     print(f"Error loading model '{model_id}': {e}")
     exit(1)
 
-  # Print the actual device(s) where parameters reside.
   device_set = {str(p.device) for p in model.parameters()}
   print("Model loaded on device(s):", device_set)
-
-  tokenizer = AutoTokenizer.from_pretrained(model_id)
-
-  if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
-  print("Model and tokenizer loaded successfully.")
-
-  return model, tokenizer
+  processor = MllamaProcessor.from_pretrained(model_id)
+  print("Model and processor loaded successfully.")
+  return model, processor
 
 
 def load_hle_dataset():
   print("Loading HLE test dataset...")
   dataset = load_dataset("cais/hle", split="test")
-  dataset = dataset.filter(lambda x: x["image"] == "")
   print(f"Loaded {len(dataset)} questions from HLE test dataset.")
   return dataset
 
@@ -94,27 +82,15 @@ def prompt_as_str(question):
   return msg if isinstance(msg, str) else "\n".join(map(str, msg))
 
 
-# --- Composable Prediction Functions ---
-
-
-def encode_prompt(prompt, tokenizer, device):
-  return tokenizer(prompt, return_tensors="pt", truncation=False).to(device)
-
-
 def generate_raw_output(model, inputs, max_new_tokens):
   return model.generate(**inputs, max_new_tokens=max_new_tokens)
 
 
-def decode_outputs(outputs, tokenizer):
-  return [tokenizer.decode(o, skip_special_tokens=True) for o in outputs]
+def decode_outputs(outputs, processor):
+  return [processor.decode(o, skip_special_tokens=True) for o in outputs]
 
 
 def process_prediction_output(prediction_str):
-  """
-    Given the raw prediction string in NDJSON format (one JSON object per line),
-    use jsonlines to iterate over each JSON object, validate with the Message model,
-    and return the concatenated content for messages whose role is not 'system'.
-    """
   with open("output.txt", "w") as f:
     f.write(prediction_str)
   try:
@@ -122,37 +98,32 @@ def process_prediction_output(prediction_str):
     for obj in jsonlines.Reader(prediction_str.splitlines()):
       try:
         msg = Message.model_validate(obj)
-
         if msg.role.lower() != "system":
           messages.append(msg.content)
-
       except Exception as e:
         print("Validation error for message:", e)
-
     return "\n".join(messages).strip()
-
   except Exception as e:
     print("Error processing prediction output:", e)
     return "Failed to process prediction output."
 
 
-def compose_prediction(model, tokenizer, prompt, device, max_new_tokens=8192):
-  inputs = encode_prompt(prompt, tokenizer, device)
+def compose_prediction(model, processor, prompt, device, max_new_tokens=8192, raw_image=None):
+  if raw_image is not None:
+    inputs = processor(prompt, raw_image, return_tensors="pt").to(model.device)
+  else:
+    inputs = processor(prompt, return_tensors="pt", truncation=False).to(model.device)
   raw_outputs = generate_raw_output(model, inputs, max_new_tokens)
-  decoded = decode_outputs(raw_outputs, tokenizer)
+  decoded = decode_outputs(raw_outputs, processor)
   return decoded[0]
 
 
-# --- Prediction & Judge Pipeline ---
-
-
-def generate_predictions(model, tokenizer, questions, device, model_id, resume):
+def generate_predictions(model, processor, questions, device, model_id, resume):
   output_filepath = get_output_filename(model_id)
   predictions = {}
 
   if resume and os.path.exists(output_filepath):
     print(f"Resuming from existing predictions file '{output_filepath}'.")
-
     with open(output_filepath, "r") as f:
       data = json.load(f)
       for k, v in data.items():
@@ -160,24 +131,39 @@ def generate_predictions(model, tokenizer, questions, device, model_id, resume):
           predictions[k] = Prediction.model_validate(v).model_dump()
         except Exception as e:
           print(f"Prediction validation error for id {k}:", e)
-
   elif os.path.exists(output_filepath):
     print(f"Found existing predictions file '{output_filepath}', but not resuming. Overwriting predictions.")
-
   else:
     print("No existing predictions file found. Starting fresh predictions.")
 
   total = len(questions)
   for idx, question in enumerate(questions):
     qid = question["id"]
-
     if resume and qid in predictions:
       print(f"Skipping question {idx+1}/{total} (id: {qid}) as prediction exists.")
       continue
 
-    prompt = prompt_as_str(question)
+    raw_image = None
+    if question.get("image", "").strip():
+      try:
+        raw_bytes = base64.b64decode(question["image"])
+        raw_image = PIL_Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+      except Exception as e:
+        print(f"Error decoding image for question {qid}: {e}")
+
+    conversation = [
+      {
+        "role": "user",
+        "content": [
+          {"type": "image"} if raw_image is not None else {"type": "text"},
+          {"type": "text", "text": question["question"]},
+        ],
+      },
+    ]
+    prompt = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+
     print(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
-    raw_pred = compose_prediction(model, tokenizer, prompt, device, max_new_tokens=8192)
+    raw_pred = compose_prediction(model, processor, prompt, device, max_new_tokens=8192, raw_image=raw_image)
     content = process_prediction_output(raw_pred)
     predictions[qid] = Prediction(question_id=qid, model=model_id, content=content, raw_response=raw_pred).model_dump()
 
@@ -189,23 +175,17 @@ def generate_predictions(model, tokenizer, questions, device, model_id, resume):
 
 
 def parse_judge_text(text: str) -> dict:
-  """
-    Parse a text block containing lines in the form "key: value" and return a dict.
-    """
   result = {}
   for line in text.splitlines():
-
     if ":" in line:
       key, value = line.split(":", 1)
       result[key.strip()] = value.strip()
   return result
 
 
-def extract_judge_answer(question_text, correct_answer, response, model, tokenizer, device):
+def extract_judge_answer(question_text, correct_answer, response, model, processor, device):
   judge_prompt = JUDGE_PROMPT.format(question=question_text, correct_answer=correct_answer, response=response)
-  raw_judge = compose_prediction(model, tokenizer, judge_prompt, device, max_new_tokens=4096)
-
-  # If the model merely echoes the prompt, return a default null answer.
+  raw_judge = compose_prediction(model, processor, judge_prompt, device, max_new_tokens=4096)
 
   if raw_judge.strip() == judge_prompt.strip():
     print("Judge output identical to prompt; returning default null answer.")
@@ -244,7 +224,7 @@ def extract_judge_answer(question_text, correct_answer, response, model, tokeniz
     }
 
 
-def judge_predictions(dataset, predictions, model, tokenizer, device, model_id):
+def judge_predictions(dataset, predictions, model, processor, device, model_id):
   judged_filepath = get_judged_filename(model_id)
   judged = {}
 
@@ -255,7 +235,7 @@ def judge_predictions(dataset, predictions, model, tokenizer, device, model_id):
       data = json.load(f)
       for k, v in data.items():
         try:
-          judged[k] = JudgedPrediction.model_validate(v).model_dump()
+          judged[k] = ExtractedAnswer.model_validate(v).model_dump()
         except Exception as e:
           print(f"Judged prediction validation error for id {k}:", e)
 
@@ -276,16 +256,20 @@ def judge_predictions(dataset, predictions, model, tokenizer, device, model_id):
     response = predictions[qid]["content"]
     print(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
-      question_text=question["question"], correct_answer=question["answer"], response=response, model=model, tokenizer=tokenizer, device=device
+      question_text=question["question"],
+      correct_answer=question["answer"],
+      response=response,
+      model=model,
+      processor=processor,
+      device=device,
     )
-
-    judged[qid] = JudgedPrediction(
-      extracted_final_answer=judge_result["extracted_final_answer"],
-      reasoning=judge_result["reasoning"],
-      correct=judge_result["correct"],
-      confidence=judge_result["confidence"],
-      strict=True,
-    ).model_dump()
+    judged[qid] = {
+      "extracted_final_answer": judge_result["model_answer"],
+      "reasoning": judge_result["reasoning"],
+      "correct": judge_result["correct"],
+      "confidence": judge_result["confidence"],
+      "strict": True,
+    }.model_dump()
 
     with open(judged_filepath, "w") as f:
       json.dump(judged, f, indent=4)
@@ -315,10 +299,11 @@ def main():
   device = torch.device("cpu") if args.cpu else (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
   print(f"Using device: {device}")
 
-  model, tokenizer = load_model_and_tokenizer(model_id, device)
+  model, processor = load_model_and_processor(model_id, device)
   dataset = load_hle_dataset()
-  predictions = generate_predictions(model, tokenizer, dataset, device, model_id, args.resume)
-  judge_predictions(dataset, predictions, model, tokenizer, device, model_id)
+
+  predictions = generate_predictions(model, processor, dataset, device, model_id, args.resume)
+  judge_predictions(dataset, predictions, model, processor, device, model_id)
 
 
 if __name__ == "__main__":

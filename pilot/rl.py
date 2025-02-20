@@ -83,14 +83,16 @@ if __name__ == "__main__":
   parser.add_argument("--cpu", type=lambda x: x.lower() in ("true", "1", "yes"), default=False)
   args = parser.parse_args()
 
-  use_mps = torch.backends.mps.is_available() and not args.cpu
-  device_map = "mps" if use_mps else "cpu"
+  # Prioritize CUDA, then MPS, then CPU
+  use_cuda = torch.cuda.is_available() and not args.cpu
+  use_mps = torch.backends.mps.is_available() and not args.cpu and not use_cuda
+  device_map = "cuda" if use_cuda else ("mps" if use_mps else "cpu")
   print(f"Using device_map: {device_map}")
 
   model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
   lora_config = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
 
-  if use_mps:
+  if use_cuda or use_mps:
     quantization_config = TorchAoConfig(quant_type="int4_weight_only", group_size=128)
     model = MllamaForConditionalGeneration.from_pretrained(
       model_id, torch_dtype=torch.bfloat16, device_map=device_map, quantization_config=quantization_config, trust_remote_code=True
@@ -106,7 +108,6 @@ if __name__ == "__main__":
       processor.tokenizer.pad_token = processor.tokenizer.bos_token or "<pad>"
     processor.tokenizer.pad_token_id = processor.tokenizer.convert_tokens_to_ids(processor.tokenizer.pad_token)
     processor.pad_token = processor.tokenizer.pad_token
-    # Expose pad_token_id at top level for GRPOTrainer
     processor.pad_token_id = processor.tokenizer.pad_token_id
 
   train_data, val_data, test_data = load_and_split_dataset(test_size=0.05, val_size=0.1)

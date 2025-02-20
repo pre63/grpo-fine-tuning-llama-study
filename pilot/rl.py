@@ -89,6 +89,7 @@ def reward_fn(prompts, completions, **kwargs):
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument("--cpu", type=lambda x: x.lower() in ("true", "1", "yes"), default=False)
+  parser.add_argument("--model", type=str, default="meta-llama/Llama-3.2-11B-Vision-Instruct")
   args = parser.parse_args()
 
   use_cuda = torch.cuda.is_available() and not args.cpu
@@ -96,7 +97,7 @@ if __name__ == "__main__":
   device_map = "cuda" if use_cuda else ("mps" if use_mps else "cpu")
   print(f"Using device_map: {device_map}")
 
-  model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+  model_id = args.model
   lora_config = LoraConfig(r=2, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")  # Reduced to 2
 
   if use_cuda or use_mps:

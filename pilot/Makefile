@@ -22,7 +22,7 @@ fix:
 
 rl:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python rl.py --cpu $(CPU)
+	@. ../.venv/bin/activate && python rl.py --cpu $(CPU) --model $(MODEL) 
 
 eval:
 	@$(MAKE) fix

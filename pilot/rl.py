@@ -36,8 +36,8 @@ def build_conversation(example: Dict, is_vision_model: bool) -> List[Dict]:
     image = decode_base64_image(example["image"])
     user_content = [{"type": "image"}] + user_content if image else user_content
   return [
-    {"role": "user", "content": user_content},
-    {"role": "assistant", "content": [{"type": "text", "text": example["answer"]}]},
+      {"role": "user", "content": user_content},
+      {"role": "assistant", "content": [{"type": "text", "text": example["answer"]}]},
   ]
 
 
@@ -45,9 +45,9 @@ def tokenize_prompt(processor, conversation: List[Dict], images: List[PIL_Image.
   prompt = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
   is_vision_model = "vision" in processor.model_name.lower()
   tokens = (
-    processor(text=prompt, images=images if is_vision_model and images else None, padding="max_length", truncation=True, max_length=32, return_tensors="pt")
-    if is_vision_model
-    else processor(prompt, padding="max_length", truncation=True, max_length=32, return_tensors="pt")
+      processor(text=prompt, images=images if is_vision_model and images else None, padding="max_length", truncation=True, max_length=32, return_tensors="pt")
+      if is_vision_model
+      else processor(prompt, padding="max_length", truncation=True, max_length=32, return_tensors="pt")
   )
   input_ids = tokens["input_ids"][0].tolist()
   labels = [-100 if token == processor.pad_token_id else token for token in input_ids]
@@ -58,14 +58,23 @@ def tokenize_example(example: Dict, processor) -> Dict:
   is_vision_model = "vision" in processor.model_name.lower()
   images = [decode_base64_image(example["image"]) or None] if is_vision_model and example.get("image", "").strip() else []
   conversation = build_conversation(example, is_vision_model)
-  return tokenize_prompt(processor, conversation, [img for img in images if img])
+
+  # Extract the prompt from the conversation (user's question)
+  prompt = conversation[0]["content"][0]["text"]  # The question from the user
+
+  # Tokenize the prompt and full conversation
+  tokenized = tokenize_prompt(processor, conversation, [img for img in images if img])
+
+  # Add the prompt to the returned dictionary
+  tokenized["prompt"] = prompt
+  return tokenized
 
 
 def compute_reward(prompts: List[str], completions: List[str], ground_truths: List[Optional[str]]) -> List[float]:
   rewards = []
   for prompt, completion, truth in zip(prompts, completions, ground_truths or [None] * len(completions)):
     reward = (
-      1.0 if not truth else (util.cos_sim(embedder.encode(completion, convert_to_tensor=True), embedder.encode(truth, convert_to_tensor=True)).item() + 1) / 2
+        1.0 if not truth else (util.cos_sim(embedder.encode(completion, convert_to_tensor=True), embedder.encode(truth, convert_to_tensor=True)).item() + 1) / 2
     )
     rewards.append(reward)
   return rewards
@@ -89,11 +98,11 @@ def load_model_and_processor(model_id: str, device_map: Union[str, Dict[str, int
   processor_class = MllamaProcessor if is_vision_model else AutoTokenizer
 
   model = model_class.from_pretrained(
-    model_id,
-    torch_dtype=torch.bfloat16 if isinstance(device_map, dict) or device_map == "mps" else torch.float16,
-    device_map=device_map,
-    quantization_config=quantization_config if isinstance(device_map, dict) or device_map == "mps" else None,
-    trust_remote_code=True,
+      model_id,
+      torch_dtype=torch.bfloat16 if isinstance(device_map, dict) or device_map == "mps" else torch.float16,
+      device_map=device_map,
+      quantization_config=quantization_config if isinstance(device_map, dict) or device_map == "mps" else None,
+      trust_remote_code=True,
   )
   processor = processor_class.from_pretrained(model_id)
 
@@ -121,17 +130,17 @@ def apply_lora(model) -> object:
 
 def get_config() -> GRPOConfig:
   return GRPOConfig(
-    output_dir="./results",
-    learning_rate=1e-4,
-    per_device_train_batch_size=2,
-    num_train_epochs=2,
-    num_generations=2,
-    max_prompt_length=32,
-    max_completion_length=32,
-    temperature=0.7,
-    beta=0.1,
-    remove_unused_columns=False,
-    log_completions=True,
+      output_dir="./results",
+      learning_rate=1e-4,
+      per_device_train_batch_size=2,
+      num_train_epochs=2,
+      num_generations=2,
+      max_prompt_length=32,
+      max_completion_length=32,
+      temperature=0.7,
+      beta=0.1,
+      remove_unused_columns=False,
+      log_completions=True,
   )
 
 
@@ -153,12 +162,12 @@ if __name__ == "__main__":
 
   config = get_config()
   trainer_args = {
-    "model": model,
-    "reward_funcs": lambda p, c, **kw: compute_reward(p, c, kw.get("ground_truths", [d["answer"] for d in train_data])),
-    "train_dataset": train_data,
-    "eval_dataset": test_data,
-    "processing_class": processor,
-    "args": config,
+      "model": model,
+      "reward_funcs": lambda p, c, **kw: compute_reward(p, c, kw.get("ground_truths", [d["answer"] for d in train_data])),
+      "train_dataset": train_data,
+      "eval_dataset": test_data,
+      "processing_class": processor,
+      "args": config,
   }
   trainer = GRPOTrainer(**trainer_args)
 

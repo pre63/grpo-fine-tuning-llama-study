@@ -17,6 +17,8 @@ def decode_base64_image(image_str: str) -> Optional[PIL_Image.Image]:
 
 
 if __name__ == "__main__":
+  print("Running test for image_utils.py")
+
   import unittest
 
   from PIL import Image

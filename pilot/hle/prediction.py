@@ -27,18 +27,6 @@ SYSTEM_EXACT_ANSWER = "Your response should be in the following format:\nExplana
 SYSTEM_MC = "Your response should be in the following format:\nExplanation: {your explanation for your answer choice}\nAnswer: {your chosen answer}\nConfidence: {your confidence score between 0% and 100% for your answer}"
 
 
-def format_message(question):
+def get_system_prompt(question):
   answer_type = question["answer_type"]
-  system_prompt = SYSTEM_EXACT_ANSWER if answer_type == "exact_match" else SYSTEM_MC
-  question_text = question["question"]
-
-  text_content = dict(type="text", text=question_text)
-  if question["image"]:  # "" if not multi-modal
-    image_content = dict(type="image_url", image_url=dict(url=question["image"]))
-    content = [text_content, image_content]
-  else:
-    content = [text_content]
-
-  system_role = "system"
-  messages = [{"role": system_role, "content": system_prompt}, {"role": "user", "content": content}]
-  return messages
+  return SYSTEM_EXACT_ANSWER if answer_type == "exactMatch" else SYSTEM_MC

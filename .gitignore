@@ -313,4 +313,5 @@ __pycache__
 
 pilot/.model/*
 pilot/.predictions/*
+pilot/.grpo_output/*
 Report.bcf-SAVE-ERROR

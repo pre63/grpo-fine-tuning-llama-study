@@ -3,7 +3,7 @@ from typing import List, Optional
 from sentence_transformers import SentenceTransformer, util
 
 try:
-  embedder = SentenceTransformer("all-MiniLM-L6-v2")
+  embedder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
 except ImportError as e:
   print(f"Failed to load SentenceTransformer: {e}")
   embedder = None
@@ -26,6 +26,8 @@ def compute_reward(prompts: List[str], completions: List[str], ground_truths: Li
 
 
 if __name__ == "__main__":
+  print("Running test for reward.py")
+
   import unittest
 
   class TestRewardIntegration(unittest.TestCase):

@@ -16,6 +16,12 @@ install:
 test:
 	@$(MAKE) fix
 	@. ../.venv/bin/activate && python network.py
+	@. ../.venv/bin/activate && python -m grpo.image_utils
+	@. ../.venv/bin/activate && python -m grpo.conversation
+	@. ../.venv/bin/activate && python -m grpo.reward
+	@. ../.venv/bin/activate && python -m grpo.hardware
+	@. ../.venv/bin/activate && python -m grpo.model
+	@. ../.venv/bin/activate && python -m grpo.config
 
 fix:
 	@. ../.venv/bin/activate && isort . && black .

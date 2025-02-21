@@ -6,17 +6,18 @@ from typing import Dict, Tuple, Union
 
 import torch
 from datasets import Dataset
-from peft import LoraConfig, get_peft_model
 from PIL import Image
-from PIL import Image as PIL_Image
-from transformers import LlamaForCausalLM, MllamaForConditionalGeneration, MllamaProcessor, PreTrainedTokenizerBase
+from transformers import LlamaForCausalLM, MllamaForConditionalGeneration
 from trl import GRPOTrainer
 
 from grpo.config import get_config
 from grpo.conversation import tokenize_example
-from grpo.hardware import get_parameters, is_vision_model
+from grpo.hardware import get_parameters
 from grpo.model import apply_lora, load_model_and_processor
 from grpo.reward import compute_reward
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -25,11 +26,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def get_trainer(model_id, model, processors, train_data, test_data):
-  """Helper function to create a GRPOTrainer instance."""
-  config = get_config(model_id, 8192)
-  max_prompt_length = max(len(example["input_ids"]) for example in train_data)
-  logger.info(f"Computed max_prompt_length: {max_prompt_length}")
+def get_trainer(model_id: str, model, processors, train_data, test_data, device_map: str):
+  logger.info("Setting up GRPOTrainer")
+
+  # Get config with device
+  config = get_config(model_id, device_map)
+
   trainer_args = {
     "model": model,
     "reward_funcs": lambda prompts, completions, **kw: compute_reward(prompts, completions, kw.get("ground_truths", [d["answer"] for d in train_data])),
@@ -37,7 +39,9 @@ def get_trainer(model_id, model, processors, train_data, test_data):
     "eval_dataset": test_data,
     "args": config,
   }
+
   trainer = GRPOTrainer(**trainer_args)
+
   return trainer
 
 
@@ -78,7 +82,7 @@ if __name__ == "__main__":
       self.assertEqual(len(test_data), 2, "Test data should have 2 examples")
       self.assertIn("labels", train_data[0], "Labels should be in dataset")
 
-      trainer = get_trainer(model_id, model, processors, train_data, test_data)
+      trainer = get_trainer(model_id, model, processors, train_data, test_data, device_map)
 
       self.assertIsInstance(trainer, GRPOTrainer, "Trainer should be a GRPOTrainer")
       self.assertEqual(trainer.model, model, "Trainer model mismatch")
@@ -86,6 +90,7 @@ if __name__ == "__main__":
       self.assertEqual(trainer.eval_dataset, test_data, "Trainer eval dataset mismatch")
 
       trainer.train()
+
       logger.info("Training completed")
 
       torch.cuda.empty_cache() if torch.cuda.is_available() else None

@@ -38,13 +38,10 @@ eval:
 	@. ../.venv/bin/activate && python eval.py
 
 local:
-	@$(MAKE) fix
 	$(MAKE) test CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
 	$(MAKE) rl CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
 
 cuda:
-	@$(MAKE) fix
-
 	$(MAKE) test CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
 	$(MAKE) test CPU=False MODEL="meta-llama/Llama-3.2-1B-Instruct"
 	$(MAKE) test CPU=False MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"

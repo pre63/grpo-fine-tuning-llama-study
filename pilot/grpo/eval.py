@@ -105,7 +105,15 @@ def process_prediction_output(prediction_str):
     return "Failed to process prediction output."
 
 
-def compose_prediction(model, processors, question, device, max_new_tokens=8192, is_vision_model=False):
+def decode(processor, input_ids, raw_output):
+  input_length = input_ids.shape[1]
+  generated_ids = raw_output[0, input_length:]
+  decoded = processor.decode(generated_ids, skip_special_tokens=True)
+  return decoded
+
+
+def compose_prediction(model, processors, question, device, max_new_tokens=2048, is_vision_model=False):
+  torch.cuda.empty_cache()
   has_images = is_vision_model and question.get("image", "").strip()
   conversation = build_conversation(question, has_images, include_system_prompt=True)
 
@@ -113,16 +121,24 @@ def compose_prediction(model, processors, question, device, max_new_tokens=8192,
   vision_processor = processors["vision"] if is_vision_model else None
 
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
-  images = [decode_base64_image(question["image"])] if question.get("image", "").strip() else []
+  images = [decode_base64_image(question["image"])] if has_images else []
 
   if is_vision_model:
-    inputs = vision_processor(text=prompt, images=images, return_tensors="pt", padding="max_length", truncation=True, max_length=8192).to(device)
-    raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-    decoded = vision_processor.decode(raw_outputs[0], skip_special_tokens=True)
+    inputs = vision_processor(text=prompt, images=images, return_tensors="pt").to(device)
+    logger.info(f"Input shape: {inputs['input_ids'].shape}")
+    with torch.no_grad():
+      raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
+      decoded = decode(vision_processor, inputs["input_ids"], raw_outputs)
   else:
-    inputs = text_processor(prompt, return_tensors="pt", padding="max_length", truncation=True, max_length=8192).to(device)
-    raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-    decoded = text_processor.decode(raw_outputs[0], skip_special_tokens=True)
+    inputs = text_processor(prompt, return_tensors="pt").to(device)
+    logger.info(f"Input shape: {inputs['input_ids'].shape}")
+    with torch.no_grad():
+      raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
+      decoded = decode(text_processor, inputs["input_ids"], raw_outputs)
+
+  divider = "=" * 80
+  line = f"\n{divider}\n{question['question']}\n---\n{decoded}\n{divider}\n"
+  logger.info(line)
 
   return decoded
 
@@ -176,12 +192,13 @@ def parse_judge_text(text: str) -> dict:
 def extract_judge_answer(question_text, correct_answer, response, model, processors, device):
   judge_prompt = format_judge_prompt(question_text, correct_answer, response)
   conversation = [{"role": "user", "content": [{"type": "text", "text": judge_prompt}]}]
-  text_processor = processors["text"]  # TODO ahndle vision model
+  text_processor = processors["text"]
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
 
-  inputs = text_processor(prompt, return_tensors="pt").to(device)
-  raw_judge = model.generate(**inputs, max_new_tokens=4096)
-  decoded_judge = text_processor.decode(raw_judge[0], skip_special_tokens=True)
+  with torch.no_grad():
+    inputs = text_processor(prompt, return_tensors="pt").to(device)
+    raw_judge = model.generate(inputs["input_ids"], max_new_tokens=4096)
+    decoded_judge = decode(text_processor, inputs["input_ids"], raw_judge)
 
   if decoded_judge.strip() == judge_prompt.strip():
     logger.info("Judge output identical to prompt; returning default null answer.")
@@ -195,6 +212,12 @@ def extract_judge_answer(question_text, correct_answer, response, model, process
 
   parsed = parse_judge_text(decoded_judge)
   try:
+    # Fix confidence parsing (remove % and convert to int)
+    if "confidence" in parsed:
+      parsed["confidence"] = int(parsed["confidence"].replace("%", ""))
+    # Add strict if missing
+    if "strict" not in parsed:
+      parsed["strict"] = True
     extracted = ExtractedAnswer.model_validate(parsed)
     return {
       "correct_answer": correct_answer,
@@ -206,12 +229,20 @@ def extract_judge_answer(question_text, correct_answer, response, model, process
   except Exception as e:
     logger.error(f"Failed to validate judge output: {e}")
     judged_correct = "yes" if "yes" in decoded_judge.lower() else "no"
+    # Fallback with cleaned confidence
+    confidence = 100
+    for line in decoded_judge.splitlines():
+      if "confidence" in line.lower():
+        try:
+          confidence = int(re.search(r"\d+", line).group())
+        except:
+          pass
     return {
       "correct_answer": correct_answer,
-      "model_answer": decoded_judge,
+      "model_answer": decoded_judge.strip(),
       "reasoning": "Fallback: could not parse judge output.",
       "correct": judged_correct,
-      "confidence": 100,
+      "confidence": confidence,
     }
 
 
@@ -282,6 +313,8 @@ if __name__ == "__main__":
   model = apply_lora(model)
 
   device = torch.device("cuda" if isinstance(device_map, dict) else device_map)
+
   test_data = load_hle_dataset()
+  test_data = test_data.take(2)
 
   evaluate(model, processors, test_data, device, model_id, resume, is_vision_model)

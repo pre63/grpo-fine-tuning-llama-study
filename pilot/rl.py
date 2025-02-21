@@ -24,7 +24,7 @@ if __name__ == "__main__":
   )
 
   print("Creating trainer...")
-  trainer = get_trainer(model_id, model, processors, train_data, test_data)
+  trainer = get_trainer(model_id, model, processors, train_data, test_data, device_map)
 
   print("Training model...")
   trainer.train()

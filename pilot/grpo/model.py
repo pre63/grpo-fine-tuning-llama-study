@@ -55,6 +55,7 @@ def load_model_and_processor(model_id: str, device_map: Union[str, Dict[str, int
 
 def ensure_padding_token(processor, model_id: str) -> None:
   """Ensure the processor has a valid padding token."""
+
   if hasattr(processor, "tokenizer"):
     if processor.tokenizer.pad_token is None:
       processor.tokenizer.pad_token = processor.tokenizer.bos_token or "<pad>"
@@ -73,6 +74,7 @@ def apply_lora(model) -> object:
   logger.info("Entering apply_lora")
   lora_config = LoraConfig(r=2, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
   model_with_lora = get_peft_model(model, lora_config)
+
   logger.info("Exiting apply_lora")
   return model_with_lora
 

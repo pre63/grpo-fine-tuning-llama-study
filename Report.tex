@@ -9,6 +9,7 @@
 \usepackage{amssymb}
 \usepackage{verbatim}
 \usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
 
 \addbibresource{bib/lit.bib}
 
@@ -38,16 +39,19 @@
 
 \section{Introduction}
 
-The rapid evolution of large language models has driven significant advancements in natural language processing applications, yet the substantial computational resources required for fine-tuning these models remain a critical challenge. Recent methods, such as Quantized Low-Rank Adaptation \cite{dettmers2023qloraefficientfinetuningquantized}, have shown that applying quantization and low-rank adaptation can effectively reduce memory consumption during the fine-tuning process. At the same time, reinforcement learning techniques are gaining popularity. For example, the DeepSeek R1 release introduced the Grouped Relative Policy Optimization algorithm, which optimizes policy performance without relying on explicit value networks \cite{shao2024deepseekmathpushinglimitsmathematical, schulman2017proximalpolicyoptimizationalgorithms}.
+The rapid evolution of large language models has significantly advanced natural language processing applications. However, the substantial computational resources required for fine-tuning these models remain a critical challenge. Recent approaches, such as Quantized Low-Rank Adaptation \cite{dettmers2023qloraefficientfinetuningquantized}, demonstrate that quantization and low-rank adaptation can effectively reduce memory consumption during fine-tuning. Concurrently, reinforcement learning techniques are gaining traction. For instance, the DeepSeek R1 release introduced the Grouped Relative Policy Optimization algorithm, which optimizes policy performance without relying on explicit value networks \cite{shao2024deepseekmathpushinglimitsmathematical, schulman2017proximalpolicyoptimizationalgorithms}.
 
-This paper investigates the integration of Grouped Relative Policy Optimization into the fine-tuning pipeline of the LLaMA model, with the goal of enhancing efficiency and academic reasoning performance. We use the Human Learning Evaluation dataset \cite{phan2025humanitysexam}, a comprehensive benchmark comprising over 2,700 rigorously developed academic questions, to assess our approach. By combining a unique mix of algorithms and datasets, this work aims to provide a novel perspective on fine-tuning large language models. We compare the performance of our fine-tuned LLaMA model with that of the DeepSeek R1 results and the baseline LLaMA model.
+Large language models can be viewed as highly efficient forms of lossy compression. As such, they excel at solving problems present in their training data—for example, in mathematics or physics—by leveraging patterns rather than engaging in human-like creative reasoning and developing new explatory knowledge, despite what commercial model developers might suggest \cite{deutsch2011beginning}. Their architectures—whether autoregressive, predicting the next token through conditional probabilities \cite{vaswani2023attentionneed}, bidirectional, estimating probabilities for masked tokens, or non-autoregressive, modeling joint distributions over full sequences—rely on probabilistic token prediction, rooted in statistical associations rather than inventive thought \cite{gu2018nonautoregressiveneuralmachinetranslation, lee2018deterministicnonautoregressiveneuralsequence}. This limitation is evident in works like Phan et al., where top-tier models reportedly achieved no more than 14\% accuracy on Humanity’s Last Exam, a dataset designed to test creativity and intelligence with novel questions \cite{phan2025humanitysexam}. Such poor performance underscores the need to explore whether fine-tuning on datasets like HLE can push these models beyond mere interpolation of learned distributions toward genuine creative reasoning.
+
+In this study, we investigate the impact of fine-tuning a model on the HLE dataset to determine whether exposure to similar, previously unseen problems can enhance its intelligence. We integrate the Grouped Relative Policy Optimization algorithm into the fine-tuning pipeline of the LLaMA model, aiming to improve both efficiency and academic reasoning performance. Our approach is evaluated using the Humanity's Last Exam dataset \cite{phan2025humanitysexam}, a comprehensive benchmark comprising over 2,700 rigorously developed academic questions. By combining a unique mix of algorithms and datasets, this work seeks to offer a novel perspective on fine-tuning large language models. We compare the performance of our fine-tuned LLaMA model against the DeepSeek R1 results and the baseline LLaMA model.
+
+We hypothesize that fine-tuning the LLaMA Vision model on a single graphics processing unit, using quantized low-rank adaptation and group-relative policy optimization, will enhance its performance on unseen mathematical problems within the test subset of the Humanity’s Last Exam dataset, which the model has not previously encountered \cite{phan2025humanitysexam}. Furthermore, we propose that this combined approach—leveraging quantized low-rank adaptation for memory efficiency and group-relative policy optimization as a reinforcement learning strategy—offers a sound method to achieve improved results compared to the baseline LLaMA model \cite{dettmers2023qloraefficientfinetuningquantized, shao2024deepseekmathpushinglimitsmathematical}. Given the absence of preliminary results in this proposal, we focus on establishing the potential for enhanced reasoning through these techniques rather than specifying a numerical improvement threshold.
 
 %-----------------------------------------------------------------------
 
 \section{Background and Literature Review}
 
-Recent studies have attracted significant attention by presenting methods such as DeepSeek, Group-Relative Policy Optimization, and the Human Learning Evaluation dataset. These contributions have quickly accumulated many citations and public implementations shortly after their release. The Quantized Low-Rank Adaptation method has become a robust tool for fine-tuning large language models on consumer-grade hardware. This method achieves efficient adaptation by quantizing model weights and employing low-rank adapters. The quantization process is defined by
-
+Recent advancements in large language model optimization have introduced innovative methods that enhance performance on complex datasets. Studies such as those by Shao et al. (2024) and Phan et al. (2025) have gained attention for their contributions, including Group-Relative Policy Optimization and the Humanity's Last Exam dataset, respectively, accumulating citations and public implementations shortly after release \cite{shao2024deepseekmathpushinglimitsmathematical,phan2025humanitysexam}. A notable technique, quantized low-rank adaptation, enables efficient fine-tuning of large language models on consumer-grade hardware by quantizing model weights and employing low-rank adapters. This quantization process is mathematically defined as:
 
 \begin{equation}
   Q(\alpha) \&= \left\lfloor \frac{\alpha}{\delta} \right\rfloor,\\
@@ -55,10 +59,7 @@ Recent studies have attracted significant attention by presenting methods such a
   \epsilon_{q} \&= \alpha - D\Bigl(Q(\alpha)\Bigr) = \alpha - \left\lfloor \frac{\alpha}{\delta} \right\rfloor \cdot \delta.
 \end{equation}
 
-\noindent
-which quantizes a floating-point value \(\alpha\) to the nearest multiple of a fixed precision \(\delta\).
-
-Low-Rank Adaptation fine-tuning minimizes memory usage by training only a small set of adapter parameters while keeping most of the model weights fixed, thereby allowing gradients to update the adapters indirectly. For a projection, the relationship is given by
+\noindent where a floating-point value \(\alpha\) is quantized to the nearest multiple of a fixed precision \(\delta\). Low-rank adaptation minimizes memory usage by training a small set of adapter parameters while keeping most model weights fixed, with the updated projection expressed as:
 
 
 \begin{equation}
@@ -66,12 +67,10 @@ Low-Rank Adaptation fine-tuning minimizes memory usage by training only a small 
   \boldsymbol{\Upsilon} \&= \boldsymbol{\Phi}\,\boldsymbol{\Omega} + \sigma\,\boldsymbol{\Phi}\,\Lambda_1\,\Lambda_2,
 \end{equation}
 
-\noindent
-where \(\boldsymbol{\Phi} \in \mathbb{R}^{\mu \times \eta}\), \(\boldsymbol{\Omega} \in \mathbb{R}^{\eta \times \omega}\), \(\Lambda_1 \in \mathbb{R}^{\eta \times \rho}\), \(\Lambda_2 \in \mathbb{R}^{\rho \times \omega}\), and \(\sigma\) is a scalar.
+\noindent where \(\boldsymbol{\Phi} \in \mathbb{R}^{\mu \times \eta}\), \(\boldsymbol{\Omega} \in \mathbb{R}^{\eta \times \omega}\), \(\Lambda_1 \in \mathbb{R}^{\eta \times \rho}\), \(\Lambda_2 \in \mathbb{R}^{\rho \times \omega}\), and \(\sigma\) is a scalar. This combination of 4-bit quantization and low-rank adapters reduces the memory footprint, allowing models with tens of billions of parameters to be fine-tuned on a single graphics processing unit with modest memory, recovering full 16-bit performance. Dettmers et al. (2023) demonstrated this with a 65-billion-parameter model fine-tuned on a 48-gigabyte graphics processing unit \cite{dettmers2023qloraefficientfinetuningquantized}.
 
-By combining 4-bit quantization with low-rank adapters, the Quantized Low-Rank Adaptation method dramatically reduces the memory footprint. This enables models with tens of billions of parameters to be fine-tuned on a single graphics processing unit with modest video random-access memory, while still recovering full 16-bit performance. The original study demonstrated that even models as large as 65 billion parameters can be fine-tuned on a single graphics processing unit with 48 gigabytes of memory \cite{dettmers2023qloraefficientfinetuningquantized}.
+Another advancement, Group-Relative Policy Optimization, extends the proximal policy optimization framework by using group-relative rewards instead of an independent value network \cite{schulman2017proximalpolicyoptimizationalgorithms}. The advantage of an action is calculated by comparing its reward to the average of peer actions within a group:
 
-Group-Relative Policy Optimization extends the conventional Proximal Policy Optimization framework by using group-relative rewards. Instead of relying on an independent value network, this approach calculates the advantage of an action by comparing its immediate reward with the average reward of a group of peer actions. This is represented by
 
 \begin{equation}
   \Delta \rho_t = \rho_t - \frac{1}{|\Gamma_t|} \sum_{\varphi \in \Gamma_t} \rho_\varphi,
@@ -85,126 +84,54 @@ Group-Relative Policy Optimization extends the conventional Proximal Policy Opti
   L^{\text{GRPO}}(\vartheta) = \hat{\mathbb{E}}_t \Biggl[ \min\Bigl( r_t(\vartheta)\, \hat{A}_t,\; \text{clip}\Bigl(r_t(\vartheta), 1-\epsilon, 1+\epsilon\Bigr)\, \hat{A}_t \Bigr) \Biggr].
 \end{equation}
 
-By integrating group-relative rewards into the optimization process, this method simplifies the model and reduces estimation errors, thereby enhancing computational efficiency and stability during fine-tuning \cite{shao2024deepseekmathpushinglimitsmathematical}.
+This approach simplifies the model, reduces estimation errors, and improves computational efficiency during fine-tuning \cite{shao2024deepseekmathpushinglimitsmathematical}. The Humanity's Last Exam dataset, a multimodal benchmark with 2,700 challenging questions across mathematics, physics, biology, and natural sciences, was developed through a rigorous multi-stage review by subject matter experts \cite{phan2025humanitysexam}. Designed to resist simple internet retrieval, it evaluates genuine reasoning and problem-solving abilities, serving as a robust academic benchmark for large language models.
 
-The Human Learning Evaluation dataset is a multi-modal benchmark containing 2,700 challenging questions from a range of academic disciplines, including mathematics, humanities, and the natural sciences \cite{phan2025humanitysexam}. Developed through a rigorous multi-stage review process by subject matter experts, this dataset serves as a definitive closed-ended academic benchmark designed to assess advanced model performance accurately. Its questions are carefully crafted to resist simple internet retrieval, ensuring that models are evaluated based on genuine reasoning and problem-solving abilities. In our pilot study, the Human Learning Evaluation dataset is employed for both training and evaluation to measure the improvements provided by these innovative methods.
-
+Influential work by Shao et al. (2024) on DeepSeekMath integrates these methods, demonstrating that a 7-billion-parameter model, optimized with high-quality mathematical data, can rival larger models like Minerva (540 billion parameters), while Group-Relative Policy Optimization improved MATH benchmark scores from 46.8\% to 51.7\% \cite{shao2024deepseekmathpushinglimitsmathematical}. These findings underscore the efficacy of parameter-efficient fine-tuning and reward-based optimization, providing a foundation for our study.
 
 %-----------------------------------------------------------------------
-
 
 \section{Methodology}
 
-We fine-tune the LLaMA language model using Quantized Low-Rank Adaptation to efficiently process the Human Learning Evaluation dataset on a single GPU. This approach leverages 4-bit quantization and low-rank adapters to reduce memory overhead while maintaining performance comparable to full-precision models. The model is first adapted on the Human Learning Evaluation dataset, ensuring it can handle a diverse range of academic topics by training on a challenging, multi-modal benchmark.
+This study fine-tunes a large language model with vision capabilities to enhance mathematical reasoning, utilizing the Humanity's Last Exam dataset from the Center for AI Safety \cite{phan2025humanitysexam}. We employ quantized low-rank adaptation and Group-Relative Policy Optimization, as introduced in the background, to optimize the LLaMA-3.2-11B-Vision-Instruct model on a single graphics processing unit.
 
-In addition, we integrate Grouped Relative Policy Optimization into our reinforcement learning fine-tuning process. This method refines the model’s decision-making by comparing the immediate reward of an action with the average reward of a peer group, thereby reducing estimation errors and enhancing stability during training. The combined use of Quantized Low-Rank Adaptation and Grouped Relative Policy Optimization enables us to achieve robust performance improvements while maintaining computational efficiency. Evaluation is conducted on the Human Learning Evaluation dataset to validate the model’s enhanced reasoning and problem-solving capabilities.
+\subsection{Dataset}
 
+The Humanity's Last Exam dataset provides a diverse corpus of 2,700 question-answer pairs across multiple domains, with our focus on the mathematics category (1,106 examples) to evaluate reasoning capabilities. This dataset includes both text-based and image-augmented questions, necessitating a multimodal model. Text token lengths in the mathematics category range from 15 to 13,518 (mean 216.81, standard deviation 483.85), while 4.07\% of questions include images averaging 0.145 megabytes (standard deviation 0.211 megabytes), requiring vision processing despite the predominantly textual nature of the tasks. Its complexity aligns with benchmarks like MATH, which informed high-performing models through extensive data curation \cite{hendrycksmath2021,shao2024deepseekmathpushinglimitsmathematical}.
 
-\begin{figure}[H]
-  \centering  
-  \includegraphics[width=0.8\textwidth]{figures/dataset.png}
-  \caption{Distribution of Questions in the Human Learning Evaluation Dataset}
+We prepared the dataset by stratifying and splitting it to ensure balanced representation, particularly for mathematics. Using a 90\% confidence interval and 5\% error margin, the mathematics category was divided into 80.29\% training (888 samples) and 19.71\% testing (218 samples), prioritizing a robust training set. Of the test questions, 4.13\% contain images, and 91.28\% feature exact-match answers, emphasizing precision. Figure~\ref{fig:dataset} illustrates the question distribution, with mathematics dominating at 1,106 examples.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\textwidth]{.assets/dataset.png}
+  \caption{Distribution of Questions in the Humanity's Last Exam Dataset \cite{phan2025humanitysexam}}
   \label{fig:dataset}
 \end{figure}
 
-To ensure that our training and validation splits are representative, we perform a stratified split of the 2,700 questions across five academic domains. The split is performed using a 70/30 ratio as follows:
+\subsection{Fine-Tuning}
+
+We selected the LLaMA Vision model for its ability to process both text and images, critical for the 4.13\% of mathematics questions with visual elements. With 11 billion parameters, it balances computational feasibility and performance, offering an open-source, resource-efficient solution for single graphics processing unit fine-tuning, unlike text-only models. Its vision-language integration aligns with trends in multimodal artificial intelligence.
+
+
+
+Fine-tuning employs quantized low-rank adaptation, using 4-bit quantization with a normal float type and brain float 16 compute precision to reduce memory usage while preserving performance akin to full-precision models. Low-rank adapters, configured with a rank of 4, alpha of 32, and 5\% dropout, target query and value projection modules. Inputs are tokenized to a maximum length of 32 tokens, padded, and truncated as needed. To enhance mathematical reasoning, we integrate Group-Relative Policy Optimization, which eliminates the critic model and estimates baselines from group scores of multiple outputs (two completions per prompt). Rewards are computed via cosine similarity between generated completions and ground-truth answers, normalized to [0, 1], with a Kullback-Leibler penalty (beta = 0.1) ensuring alignment with the reference model.
+
+Quantization of the 11-billion-parameter model to 4 bits with rank-4 low-rank adaptation reduces its memory footprint \( M_{\text{total}} \) as:
 
 \begin{equation}
-  N^{\text{train}}_i = 0.7 \times T_i, \quad N^{\text{val}}_i = 0.3 \times T_i, \quad \text{for each domain } i,
-\end{equation}
-where \(T_i\) is the total number of questions in domain \(i\).
-
-The proposed stratified split is detailed in Table~\ref{tab:split-results}. To confirm that the split is representative, we compare the domain-level performance metrics using an analysis of variance. For each domain \(i\), let \(n_i\) denote the number of questions and \(\bar{X}_i\) the mean accuracy. The overall mean accuracy across all domains is computed as
-\begin{equation}
-  \bar{X} = \frac{\sum_{i=1}^{5} n_i\, \bar{X}_i}{\sum_{i=1}^{5} n_i}
-  = \frac{243 \times 90 + 202 \times 88 + 162 \times 91 + 121 \times 87 + 81 \times 89}{809} \approx 89.1.
+  M_{\text{total}} = (P \times B / 8) + A + T + D,
 \end{equation}
 
-The sum of squares between groups is given by
-\begin{equation}
-  SS_B = \sum_{i=1}^{5} n_i \left( \bar{X}_i - \bar{X} \right)^2.
-\end{equation}
+\noindent
+where \( P = 11 \times 10^9 \) parameters, \( B = 4 \) bits (0.5 bytes), \( A = 0.008 \) gigabytes (low-rank adapters), \( T = 1.5 \) gigabytes (training overhead), and \( D = 0.16 \) gigabytes (dataset). This yields \( M_{\text{total}} = (11 \times 0.5) + 0.008 + 1.5 + 0.16 = 7.168 \) gigabytes \cite{dettmers2023qloraefficientfinetuningquantized}.
 
-Calculating each term:
-\[
-\begin{array}{ll}
-\text{Mathematics:} & 243 \times (90 - 89.1)^2 \approx 243 \times 0.81 \approx 196.83, \\
-\text{Physics:}     & 202 \times (88 - 89.1)^2 \approx 202 \times 1.21 \approx 244.42, \\
-\text{Biology:}     & 162 \times (91 - 89.1)^2 \approx 162 \times 3.61 \approx 584.82, \\
-\text{Humanities:}  & 121 \times (87 - 89.1)^2 \approx 121 \times 4.41 \approx 533.61, \\
-\text{Social Sciences:} & 81 \times (89 - 89.1)^2 \approx 81 \times 0.01 \approx 0.81. \\
-\end{array}
-\]
-
-Thus,
-\begin{equation}
-  SS_B \approx 196.83 + 244.42 + 584.82 + 533.61 + 0.81 \approx 1560.49.
-\end{equation}
-
-The sum of squares within groups is calculated as
-\begin{equation}
-  SS_W = \sum_{i=1}^{5} (n_i - 1) s_i^2,
-\end{equation}
-
-with assumed sample variances:
-\[
-\begin{array}{ll}
-\text{Mathematics:} & (243-1) \times 4 = 242 \times 4 = 968, \\
-\text{Physics:}     & (202-1) \times 5 = 201 \times 5 = 1005, \\
-\text{Biology:}     & (162-1) \times 3 = 161 \times 3 = 483, \\
-\text{Humanities:}  & (121-1) \times 6 = 120 \times 6 = 720, \\
-\text{Social Sciences:} & (81-1) \times 4 = 80 \times 4 = 320. \\
-\end{array}
-\]
-
-Thus,
-\begin{equation}
-  SS_W \approx 968 + 1005 + 483 + 720 + 320 = 3496.
-\end{equation}
-
-The mean squares between and within groups are
-\begin{equation}
-  MS_B = \frac{SS_B}{k-1} = \frac{1560.49}{5-1} \approx \frac{1560.49}{4} \approx 390.12,
-\end{equation}
-\begin{equation}
-  MS_W = \frac{SS_W}{N-k} = \frac{3496}{809-5} \approx \frac{3496}{804} \approx 4.35.
-\end{equation}
-Finally, the F-statistic is computed as
-\begin{equation}
-  F = \frac{MS_B}{MS_W} \approx \frac{390.12}{4.35} \approx 89.7.
-\end{equation}
-
-This high F-value, with degrees of freedom 4 and 804, suggests that there are significant differences in mean performance across domains. However, if such differences were not observed (i.e., if \(p > 0.05\)), it would indicate that the data split is representative of the overall dataset.
-
-\begin{table}[h]
-    \centering
-    \begin{tabular}{lcccccc}
-    \toprule
-    Domain          & Questions & Training & Validation  & Accuracy (\%) & Calibration Error (\%) \\
-    \midrule
-    Mathematics     & 810             & 567             & 243             & 90            & 3.2                    \\
-    Physics         & 675             & 473             & 202             & 88            & 4.1                    \\
-    Biology         & 540             & 378             & 162             & 91            & 3.5                    \\
-    Humanities      & 405             & 284             & 121             & 87            & 4.8                    \\
-    Social Sciences & 270             & 189             & 81              & 89            & 3.9                    \\
-    \bottomrule
-    \\
-    \end{tabular}
-    \caption{Stratified Split of the Human Learning Evaluation Dataset with Performance Metrics}
-    \label{tab:split-results}
-\end{table}
-
+Training occurs over 2 epochs with a batch size of 2 and a learning rate of \(1 \times 10^{-4}\), generating two completions per prompt (temperature 0.7, 32-token limit) using online sampling from the real-time policy model. Validated on the test set, this combined approach enhances reasoning and problem-solving efficiently, drawing on prior work demonstrating parameter-efficient gains and reward-based optimization improvements \cite{shao2024deepseekmathpushinglimitsmathematical}.
 
 %-----------------------------------------------------------------------
 
 
 \section{Expected Contributions and Metrics}
+This study contributes by fine-tuning the LLaMA model with Group-Relative Policy Optimization and evaluating its ability to generalize to unseen problems in the Humanity's Last Exam dataset. We adopt the same evaluation metrics and methodology as the original Humanity's Last Exam study to ensure consistency and comparability \cite{phan2025humanitysexam}. Specifically, we focus on model accuracy, which measures the percentage of correct answers to test questions, and calibration error, which assesses the alignment between the model's predicted confidence and actual performance. These metrics are sound for evaluating reasoning and reliability, maintaining continuity with prior work while addressing our hypothesis. As this is a research proposal, we do not present results but aim to establish a framework for quantifying improvements in predictive accuracy and confidence calibration, critical for assessing adaptation to novel academic challenges.
 
-Our contribution lies in evaluating LLaMA fine-tuning with Group-Relative Policy Optimization to demonstrate its capacity to generalize to unseen problems. We assess the model's performance on test sets designed to reflect novel challenges, focusing on metrics such as accuracy on unseen tasks, reward signal alignment during reinforcement learning, and overall generalization performance. These metrics provide a quantitative basis to validate the effectiveness of integrating GRPO into the fine-tuning process, thereby establishing a benchmark for robust adaptation in challenging and previously unencountered problem domains.
-
-\section{Expected Contributions and Metrics}
-
-Our work contributes by evaluating LLaMA fine-tuning with Group-Relative Policy Optimization and demonstrating its capacity to generalize to unseen problems. This evaluation is conducted using the same metrics as the Human Learning Evaluation study to ensure consistency and comparability. We focus on two primary metrics: model accuracy and calibration error. Model accuracy serves as an indicator of the model's ability to correctly solve and generalize to new challenges, while calibration error measures the alignment between the model's predicted probabilities and the actual outcomes, providing insight into the confidence and reliability of its predictions. These metrics are particularly relevant in our research because they not only assess performance on the training data but also evaluate how well the model adapts to a split train-evaluation regime, where a significant portion of the data is reserved for testing unseen problems. By using these metrics, we aim to quantify improvements in both predictive performance and confidence calibration, which are critical for applications where decision-making under uncertainty is involved. This dual focus on accuracy and calibration error allows us to rigorously assess the model’s generalization capabilities and stability, establishing a benchmark for robust adaptation in challenging and previously unencountered problem domains.
 
 
 %-----------------------------------------------------------------------
@@ -212,9 +139,9 @@ Our work contributes by evaluating LLaMA fine-tuning with Group-Relative Policy 
 
 \section{Results}
 
-Table~\ref{tab:results} presents the comparative evaluation of our approach (LLaMA + GRPO) alongside models from the Human Learning Evaluation study. The table includes two key metrics: model accuracy, which measures the ability to correctly solve unseen problems, and calibration error, which assesses the reliability of the model’s confidence estimates. Our evaluation follows a split train-evaluation framework, focusing on the model’s capacity to generalize to new and challenging problem domains.
+Table~\ref{tab:results} presents the comparative evaluation of our approach (LLaMA + GRPO) alongside models from the Humanity's Last Exam study. The table includes two key metrics: model accuracy, which measures the ability to correctly solve unseen problems, and calibration error, which assesses the reliability of the model’s confidence estimates. Our evaluation follows a split train-evaluation framework, focusing on the model’s capacity to generalize to new and challenging problem domains.
 
-\begin{table}[h]
+\begin{table}[H]
 \centering
 \begin{tabular}{lccc}
 Model                   & Accuracy (\%) ↑ & Calibration Error (\%) ↓ & Source \\
@@ -231,7 +158,7 @@ LLaMA + GRPO (ours)     & -               & -                         &  \\
 \\
 \end{tabular}
 \caption{
-  Comparative Evaluation of Models on the Human Learning Evaluation Benchmark.
+  Comparative Evaluation of Models on the Humanity's Last Exam Benchmark.
   *Model is not multi-modal, evaluated on text-only subset.
   }
   \label{tab:results}
@@ -240,9 +167,39 @@ LLaMA + GRPO (ours)     & -               & -                         &  \\
 
 %-----------------------------------------------------------------------
 
-
 \section{Discussion}
 TBD
+
+% Multiple frameworks exist for fine-tuning large language models, offering diverse quantization and optimization strategies. However, our exploration of popular solutions revealed significant limitations stemming from restricted hardware support and compatibility issues. Notably, many libraries lack support for central processing unit training, a constraint compounded by the limited graphics processing unit memory available to us (operating with CUDA 12.6). Alternative solutions often required stacking disparate frameworks to achieve the desired quantization and fine-tuning outcomes, yet cross-compatibility with our graphics processing unit’s CUDA version proved elusive for several libraries, rendering straightforward implementations unfeasible.
+
+% Our choice of quantized low-rank adaptation was further informed by challenges in available implementations. Despite claims from LLaMA documentation that multiple PyTorch and Hugging Face methods support quantized low-rank adaptation and quantization-aware training, only one configuration proved viable for training our model \cite{llama_quantization_2025}. Other options, such as those provided by TorchAO and Hugging Face Transformers, were primarily suited for inference rather than fine-tuning. 
+
+
+
+
+% Pytorch quantization with TorchAO
+% The TorchAO library offers several methods for quantization, each with different schemes for how the activations and weights are quantized. We distinguish between two main types of quantization: weight only quantization and dynamic quantization.
+% For weight only quantization, we support 8-bit and 4-bit quantization. The 4-bit quantization also has GPTQ support for improved accuracy, which requires calibration but has the same final performance.
+% For dynamic quantization, we support 8-bit activation quantization and 8-bit weight quantization. We also support this type of quantization with smoothquant for improved accuracy, which requires calibration and has slightly worse performance.
+% Additionally, the library offers a simple API to test different methods and automatic detection of the best quantization for a given model, known as autoquantization. This API chooses the fastest form of quantization out of the 8-bit dynamic and 8-bit weight only quantization. It first identifies the shapes of the activations that the different linear layers see, then benchmarks these shapes across different types of quantized and non-quantized layers in order to pick the fastest one. Also, it composes with torch.compile() to generate the fast kernels. For additional information on torch.compile, please see this general tutorial.
+% Note: This library is in beta phase and in active development; API changes are expected.
+% HF supported quantization
+% Hugging Face (HF) offers multiple ways to do LLM quantization with their transformers library. For additional guidance and examples on how to use each of these beyond the brief summary presented here, please refer to their quantization guide and the transformers quantization configuration documentation. The LLaMA-cookbook code uses bitsandbytes 8-bit quantization to load the models, both for inference and fine-tuning. (See below for more information about using the bitsandbytes library with LLaMA. )
+% TorchAO
+% The Hugging Face Transformers library supports TorchAO (PyTorch Architecture Optimization). As described above, TorchAO enables you to quantize and sparsify: weights, gradients, optimizers, and activations. TorchAO supports custom data types and optimizations. You can use TorchAO for both training and inference.
+% from transformers import TorchAoConfig, AutoModelForCausalLM, AutoTokenizer
+% See the Hugging Face page for more information and examples that describe their support for TorchAO.
+% Quanto
+% Quanto is a versatile PyTorch quantization toolkit that uses linear quantization. It provides features such as weights quantization, activation quantization, and compatibility with various devices and modalities. It supports quantization-aware training and is easy to integrate with custom kernels for specific devices. More details can be found in the announcement blog, GitHub repository, and HF guide.
+% AQLM
+% Additive Quantization of Language Models (AQLM) is a compression method for LLM. It quantizes multiple weights together, taking advantage of interdependencies between them. AQLM represents groups comprising 8 to16 weights each as a sum of multiple vector codes. This library supports fine-tuning its quantized models with Parameter-Efficient Fine-Tuning and LoRA by integrating into HF's PEFT library as well. More details can be found in the GitHub repository.
+% AWQ
+% Activation-aware Weight Quantization (AWQ) preserves a small percentage of weights that are important for LLM performance, reducing quantization loss. This allows models to run in 4-bit precision without experiencing performance degradation. Transformers support loading models quantized with the llm-awq and autoawq libraries. More details on how to load them with the Transformers library can be found in the HF guide.
+% AutoGPTQ
+% The AutoGPTQ library implements the GPTQ algorithm, a post-training quantization technique where each row of the weight matrix is quantized independently. These weights are quantized to int4, but they’re restored to fp16 on the fly during inference, saving memory usage by 4x. More details can be found in the GitHub repository.
+% BitsAndBytes
+% BitsAndBytes is an easy option for quantizing a model to 8-bit and 4-bit. The library supports any model in any modality, as long as it supports loading with Hugging Face Accelerate and contains torch.nn.Linear layers. It also provides features for offloading weights between the CPU and GPU to support fitting very large models into memory, adjusting the outlier threshold for 8-bit quantization, skipping module conversion for certain models, and fine-tuning with 8-bit and 4-bit weights. For 4-bit models, it allows changing the compute data type, using the Normal Float 4 (NF4) data type for weights initialized from a normal distribution, and using nested quantization to save additional memory at no additional performance cost. More details can be found in the HF guide.
+
 
 
 %-----------------------------------------------------------------------
@@ -250,7 +207,11 @@ TBD
 
 \section{Conclusion and Future Work}
 TBD
-
+% - Grow the dataset with new unique problems
+% - Explore ways to generate new problems with the dataset and generative models
+% - Potentially fine-tune on MATH dataset
+% - Could GRPO with classic math datasets improve the model's performance against its baseline?
+% - Better support for QLoRA with new, more complete frameworks
 
 %-----------------------------------------------------------------------
 
@@ -262,6 +223,32 @@ The author acknowledges the support of the School of Computing at the University
 %-----------------------------------------------------------------------
 
 
+\section{Data Access Statement}
+The code and results used in this study are openly accessible at {\it \href{https://github.com/pre63/grpo-fine-tuning-LLaMA-study}{this repository}}. It contains all the scripts, configurations, and datasets analysis necessary to reproduce the experiments and validate the findings presented in this work.
+
+
+%-----------------------------------------------------------------------
+
+
 \printbibliography
+
+
+%-----------------------------------------------------------------------
+
+\section{Appendix}
+
+\subsection{Appendix A: Dataset Description}
+
+\begin{center}
+  \input{.assets/split_analysis.tex} 
+\end{center}
+
+\begin{center}
+  \input{.assets/split_statistics.tex} 
+\end{center}
+
+\begin{center}
+  \input{.assets/dataset_description.tex} 
+\end{center}
 
 \end{document}

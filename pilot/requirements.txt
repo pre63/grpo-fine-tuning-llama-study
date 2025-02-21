@@ -9,6 +9,7 @@ datasets
 ipykernel
 jsonlines
 numpy
+nltk
 peft
 protobuf
 pydantic

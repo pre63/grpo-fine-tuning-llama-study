@@ -1,4 +1,4 @@
-.PHONY: install test fix rl eval
+.PHONY: install test fix tune eval
 
 # Use CPU instead of GPU
 export CPU=True
@@ -46,16 +46,6 @@ colab:
 
 	# Restart runtime (manual step in Colab), then test
 	@python -c "from trl import GRPOTrainer; print('Success')"
-	@pip install triton
-
-	# Uninstall conflicting packages
-	@pip uninstall -y tensorflow torch torch-xla accelerate trl transformers
-
-	# Install compatible versions
-	@pip install torch==2.4.0 torch-xla==2.4 accelerate==0.34.0 trl==0.15.1 transformers==4.46.0 tensorflow-cpu
-
-	# Restart runtime (manual step in Colab), then test
-	@python -c "from trl import GRPOTrainer; print('Success')"
 
 
 install:
@@ -64,9 +54,11 @@ install:
 fix:
 	@isort . && black .
 
-rl:
+rl: tune
+
+tune:
 	@$(MAKE) fix
-	@python rl.py
+	@python tune.py
 
 eval:
 	@$(MAKE) fix
@@ -74,15 +66,15 @@ eval:
 
 local:
 	$(MAKE) test CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
-	$(MAKE) rl CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
+	$(MAKE) tune CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
 
 cuda:
 	$(MAKE) test CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"
 	$(MAKE) test CPU=False MODEL="meta-llama/Llama-3.2-1B-Instruct"
 	$(MAKE) test CPU=False MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
 
-	$(MAKE) rl CPU=False MODEL="meta-llama/Llama-3.2-1B-Instruct"
-	$(MAKE) rl CPU=False MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
+	$(MAKE) tune CPU=False MODEL="meta-llama/Llama-3.2-1B-Instruct"
+	$(MAKE) tune CPU=False MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
 
 	$(MAKE) eval CPU=False MODEL="meta-llama/Llama-3.2-1B-Instruct"
 	$(MAKE) eval CPU=False MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"

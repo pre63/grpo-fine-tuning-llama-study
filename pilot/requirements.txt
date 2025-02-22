@@ -24,3 +24,4 @@ torchtune
 torchvision
 transformers
 trl @ git+https://github.com/huggingface/trl.git@main
+wandb

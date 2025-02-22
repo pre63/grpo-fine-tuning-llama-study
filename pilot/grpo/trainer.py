@@ -38,6 +38,7 @@ def get_trainer(model_id: str, model, processors, train_data, test_data, device_
     "train_dataset": train_data,
     "eval_dataset": test_data,
     "args": config,
+    "processing_class": processors["text"],
   }
 
   trainer = GRPOTrainer(**trainer_args)

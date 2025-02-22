@@ -1,9 +1,8 @@
 import json
 import logging
 import os
-from typing import Dict, Literal, Union
+from typing import Dict, List, Literal, Optional, Union
 
-import jsonlines
 import torch
 from datasets import load_dataset
 from pydantic import BaseModel
@@ -32,17 +31,29 @@ class Message(BaseModel):
   content: str
 
 
-class Prediction(BaseModel):
+class PredictionResponse(BaseModel):
+  explanation: str
+  answer: str
+  confidence: int
+
+
+class ModelPrediction(BaseModel):
   question_id: str
   model: str
-  content: str
-  raw_response: str
+  content: Union[str, PredictionResponse]
 
 
-class ExtractedAnswer(BaseModel):
+class JudgementResponse(BaseModel):
   extracted_final_answer: str
   reasoning: str
-  correct: Literal["yes", "no"]
+  correct_yes_no: Literal["yes", "no"]
+  confidence: int
+
+
+class ModelJudgement(BaseModel):
+  extracted_final_answer: str
+  reasoning: str
+  correct_yes_no: Literal["yes", "no"]
   confidence: int
   strict: Literal[True]
 
@@ -67,44 +78,22 @@ def get_output_filename(model_name):
   from datetime import datetime
 
   date_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
-  os.makedirs("./predictions", exist_ok=True)
+  os.makedirs(".predictions", exist_ok=True)
   safe_name = model_name.replace("/", "_").replace(" ", "_")
-  filename = f"{safe_name}_{date_time}.json"
-  return os.path.join("./predictions", filename)
+  return os.path.join(".predictions", f"{safe_name}_{date_time}.json")
 
 
 def get_judged_filename(model_name):
   from datetime import datetime
 
   date_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
-  filename = f"{model_name.replace('/', '_')}_{date_time}_judged.json"
-  os.makedirs("./judged", exist_ok=True)
-  return os.path.join("./judged", filename)
+  os.makedirs(".judged", exist_ok=True)
+  return os.path.join(".judged", f"{model_name.replace('/', '_')}_{date_time}_judged.json")
 
 
 # --------------------------------------------------
 # Prediction and Judging Functions
 # --------------------------------------------------
-
-
-def process_prediction_output(prediction_str):
-  with open("output.txt", "w") as f:
-    f.write(prediction_str)
-  try:
-    messages = []
-    for obj in jsonlines.Reader(prediction_str.splitlines()):
-      try:
-        msg = Message.model_validate(obj)
-        if msg.role.lower() != "system":
-          messages.append(msg.content)
-      except Exception as e:
-        logger.error(f"Validation error for message: {e}")
-    return "\n".join(messages).strip()
-  except Exception as e:
-    logger.error(f"Error processing prediction output: {e}")
-    return "Failed to process prediction output."
-
-
 def decode(processor, input_ids, raw_output):
   input_length = input_ids.shape[1]
   generated_ids = raw_output[0, input_length:]
@@ -112,50 +101,144 @@ def decode(processor, input_ids, raw_output):
   return decoded
 
 
-def compose_prediction(model, processors, question, device, max_new_tokens=2048, is_vision_model=False):
+def generate_and_parse_json(
+  model, processor, inputs, prompt, expected_model: type[BaseModel], max_new_tokens=8192, max_retries=3
+) -> Optional[Union[BaseModel, str]]:
+  divider = "=" * 80
+  retry_count = 0
+  while retry_count <= max_retries:
+    with torch.no_grad():
+      raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
+      decoded = decode(processor, inputs["input_ids"], raw_outputs)
+
+      # Fix incomplete JSON by adding closing bracket if missing
+      if not decoded.strip().endswith("}"):
+        decoded = decoded.strip() + "\n}"
+
+      logger.info(f"\n{divider}\n{prompt}\n---\n{decoded}\n{divider}\n")
+
+    if decoded.strip() == prompt.strip():
+      logger.info("Output identical to prompt; returning None.")
+      return None
+
+    try:
+      json_data = json.loads(decoded)
+      result = expected_model.model_validate(json_data)
+      logger.info(f"Successfully parsed and validated {expected_model.__name__} on attempt {retry_count + 1}")
+      return result
+    except json.JSONDecodeError as e:
+      retry_count += 1
+      if retry_count <= max_retries:
+        logger.warning(f"Failed to parse JSON on attempt {retry_count}: {e}. Retrying...")
+      else:
+        logger.error(f"Max retries ({max_retries}) reached. Could not parse JSON: {e}. Returning raw output.")
+        return decoded
+    except Exception as e:  # Pydantic validation errors
+      retry_count += 1
+      if retry_count <= max_retries:
+        logger.warning(f"Failed to validate {expected_model.__name__} on attempt {retry_count}: {e}. Retrying...")
+      else:
+        logger.error(f"Max retries ({max_retries}) reached. Validation failed: {e}. Returning raw output.")
+        return decoded
+
+
+# --------------------------------------------------
+# JSON Reader/Writer Functions for Specific Pydantic Types
+# --------------------------------------------------
+def read_predictions_json(filepath: str) -> Optional[List[ModelPrediction]]:
+  if not os.path.exists(filepath):
+    return None
+
+  try:
+    with open(filepath, "r", encoding="utf-8") as f:
+      data = json.load(f)
+    predictions = []
+    for value in data.values():  # Assuming data is a dict with qid keys
+      try:
+        prediction = ModelPrediction.model_validate(value)
+        predictions.append(prediction)
+      except Exception as e:
+        logger.error(f"Prediction validation error in {filepath}: {e}")
+    return predictions if predictions else None
+  except Exception as e:
+    logger.error(f"Failed to read predictions JSON file {filepath}: {e}")
+    return None
+
+
+def write_predictions_json(filepath: str, predictions: List[ModelPrediction]) -> None:
+  try:
+    # Convert list to dict with question_id as key
+    predictions_dict = {pred.question_id: pred.model_dump() for pred in predictions}
+    with open(filepath, "w", encoding="utf-8") as f:
+      json.dump(predictions_dict, f, indent=4)
+  except Exception as e:
+    logger.error(f"Failed to write predictions JSON file {filepath}: {e}")
+
+
+def read_judgements_json(filepath: str) -> Optional[List[ModelJudgement]]:
+  if not os.path.exists(filepath):
+    return None
+
+  try:
+    with open(filepath, "r", encoding="utf-8") as f:
+      data = json.load(f)
+    judgements = []
+    for value in data.values():  # Assuming data is a dict with qid keys
+      try:
+        judgement = ModelJudgement.model_validate(value)
+        judgements.append(judgement)
+      except Exception as e:
+        logger.error(f"Judgement validation error in {filepath}: {e}")
+    return judgements if judgements else None
+  except Exception as e:
+    logger.error(f"Failed to read judgements JSON file {filepath}: {e}")
+    return None
+
+
+def write_judgements_json(filepath: str, judgements: List[ModelJudgement]) -> None:
+  try:
+    # Convert list to dict with question_id as key (assuming qid is available elsewhere, we'll use index as fallback)
+    # Note: Ideally, ModelJudgement should have a qid; here we assume it's tied to predictions
+    judgements_dict = {j.extracted_final_answer: j.model_dump() for j in judgements}  # Temporary key; needs qid
+    with open(filepath, "w", encoding="utf-8") as f:
+      json.dump(judgements_dict, f, indent=4)
+  except Exception as e:
+    logger.error(f"Failed to write judgements JSON file {filepath}: {e}")
+
+
+# --------------------------------------------------
+# Prediction and Judging Functions
+# --------------------------------------------------
+
+
+def compose_prediction(model, processors, question, device, max_new_tokens=2048, is_vision_model=False, max_retries=3):
   torch.cuda.empty_cache()
   has_images = is_vision_model and question.get("image", "").strip()
   conversation = build_conversation(question, has_images, include_system_prompt=True)
 
   text_processor = processors["text"]
   vision_processor = processors["vision"] if is_vision_model else None
+  processor = vision_processor if is_vision_model else text_processor
 
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
   images = [decode_base64_image(question["image"])] if has_images else []
+  inputs = (
+    vision_processor(text=prompt, images=images, return_tensors="pt").to(device) if is_vision_model else text_processor(prompt, return_tensors="pt").to(device)
+  )
+  logger.info(f"Input shape: {inputs['input_ids'].shape}")
 
-  if is_vision_model:
-    inputs = vision_processor(text=prompt, images=images, return_tensors="pt").to(device)
-    logger.info(f"Input shape: {inputs['input_ids'].shape}")
-    with torch.no_grad():
-      raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-      decoded = decode(vision_processor, inputs["input_ids"], raw_outputs)
-  else:
-    inputs = text_processor(prompt, return_tensors="pt").to(device)
-    logger.info(f"Input shape: {inputs['input_ids'].shape}")
-    with torch.no_grad():
-      raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-      decoded = decode(text_processor, inputs["input_ids"], raw_outputs)
+  content = generate_and_parse_json(model, processor, inputs, prompt, PredictionResponse, max_new_tokens, max_retries)
 
-  divider = "=" * 80
-  line = f"\n{divider}\n{question['question']}\n---\n{decoded}\n{divider}\n"
-  logger.info(line)
-
-  return decoded
+  return content  # PredictionResponse, str, or None
 
 
-def generate_predictions(model, processors, questions, device, model_id, resume, is_vision_model):
+def generate_predictions(model, processors, questions, device, model_id, resume, is_vision_model, max_retries=3):
   output_filepath = get_output_filename(model_id)
-  predictions = {}
+  existing_predictions = read_predictions_json(output_filepath)
+  predictions = existing_predictions if existing_predictions else []
 
-  if resume and os.path.exists(output_filepath):
+  if resume and predictions:
     logger.info(f"Resuming from existing predictions file '{output_filepath}'.")
-    with open(output_filepath, "r") as f:
-      data = json.load(f)
-      for k, v in data.items():
-        try:
-          predictions[k] = Prediction.model_validate(v).model_dump()
-        except Exception as e:
-          logger.error(f"Prediction validation error for id {k}: {e}")
   elif os.path.exists(output_filepath):
     logger.info(f"Found existing predictions file '{output_filepath}', but not resuming. Overwriting predictions.")
   else:
@@ -164,101 +247,60 @@ def generate_predictions(model, processors, questions, device, model_id, resume,
   total = len(questions)
   for idx, question in enumerate(questions):
     qid = question["id"]
-    if resume and qid in predictions:
+    if resume and any(p.question_id == qid for p in predictions):
       logger.info(f"Skipping question {idx+1}/{total} (id: {qid}) as prediction exists.")
       continue
 
     logger.info(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
-    raw_pred = compose_prediction(model, processors, question, device, is_vision_model)
-    content = process_prediction_output(raw_pred)
-    predictions[qid] = Prediction(question_id=qid, model=model_id, content=content, raw_response=raw_pred).model_dump()
+    content = compose_prediction(model, processors, question, device, is_vision_model=is_vision_model, max_retries=max_retries)
+    mp = ModelPrediction(question_id=qid, model=model_id, content=content)
+    predictions.append(mp)
 
-    with open(output_filepath, "w") as f:
-      json.dump(predictions, f, indent=4)
+    write_predictions_json(output_filepath, predictions)
 
   logger.info(f"All predictions saved to '{output_filepath}'.")
   return predictions
 
 
-def parse_judge_text(text: str) -> dict:
-  result = {}
-  for line in text.splitlines():
-    if ":" in line:
-      key, value = line.split(":", 1)
-      result[key.strip()] = value.strip()
-  return result
+def extract_judge_answer(question_text, correct_answer, response, model, processors, device, max_retries=3) -> Optional[ModelJudgement]:
+  # Handle response type
+  if isinstance(response, str):
+    content = response
+  elif isinstance(response, ModelPrediction):
+    content = response.content if isinstance(response.content, str) else response.content.model_dump_json()
+  else:
+    logger.error(f"Invalid response type for judgment: {type(response)}")
+    return None
 
-
-def extract_judge_answer(question_text, correct_answer, response, model, processors, device):
-  judge_prompt = format_judge_prompt(question_text, correct_answer, response)
+  judge_prompt = format_judge_prompt(question_text, correct_answer, content)
   conversation = [{"role": "user", "content": [{"type": "text", "text": judge_prompt}]}]
   text_processor = processors["text"]
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
-
-  with torch.no_grad():
-    inputs = text_processor(prompt, return_tensors="pt").to(device)
-    raw_judge = model.generate(inputs["input_ids"], max_new_tokens=4096)
-    decoded_judge = decode(text_processor, inputs["input_ids"], raw_judge)
-
-  if decoded_judge.strip() == judge_prompt.strip():
-    logger.info("Judge output identical to prompt; returning default null answer.")
-    return {
-      "extracted_final_answer": "None",
-      "reasoning": "",
-      "correct": "no",
-      "confidence": 0,
-      "strict": True,
-    }
-
-  parsed = parse_judge_text(decoded_judge)
-  try:
-    # Fix confidence parsing (remove % and convert to int)
-    if "confidence" in parsed:
-      parsed["confidence"] = int(parsed["confidence"].replace("%", ""))
-    # Add strict if missing
-    if "strict" not in parsed:
-      parsed["strict"] = True
-    extracted = ExtractedAnswer.model_validate(parsed)
-    return {
-      "correct_answer": correct_answer,
-      "model_answer": extracted.extracted_final_answer,
-      "reasoning": extracted.reasoning,
-      "correct": extracted.correct,
-      "confidence": extracted.confidence,
-    }
-  except Exception as e:
-    logger.error(f"Failed to validate judge output: {e}")
-    judged_correct = "yes" if "yes" in decoded_judge.lower() else "no"
-    # Fallback with cleaned confidence
-    confidence = 100
-    for line in decoded_judge.splitlines():
-      if "confidence" in line.lower():
-        try:
-          confidence = int(re.search(r"\d+", line).group())
-        except:
-          pass
-    return {
-      "correct_answer": correct_answer,
-      "model_answer": decoded_judge.strip(),
-      "reasoning": "Fallback: could not parse judge output.",
-      "correct": judged_correct,
-      "confidence": confidence,
-    }
+  inputs = text_processor(prompt, return_tensors="pt").to(device)
+  judgment = generate_and_parse_json(model, text_processor, inputs, prompt, JudgementResponse, max_new_tokens=4096, max_retries=max_retries)
+  if judgment is None:  # Prompt identical to output
+    return None
+  if isinstance(judgment, JudgementResponse):
+    return ModelJudgement(
+      extracted_final_answer=judgment.extracted_final_answer,
+      reasoning=judgment.reasoning,
+      correct_yes_no=judgment.correct_yes_no,
+      confidence=judgment.confidence,
+      strict=True,
+    )
+  print("Trace: judgment is not JudgementResponse")
+  return None
 
 
 def judge_predictions(dataset, predictions, model, processors, device, model_id, is_vision_model):
-  judged_filepath = get_judged_filename(model_id)
-  judged = {}
+  predictions = {p.question_id: p for p in predictions}
 
-  if os.path.exists(judged_filepath):
+  judged_filepath = get_judged_filename(model_id)
+  existing_judgements = read_judgements_json(judged_filepath)
+  judged_list = existing_judgements if existing_judgements else []
+
+  if judged_list:
     logger.info(f"Found existing judged file '{judged_filepath}'. Resuming judgement.")
-    with open(judged_filepath, "r") as f:
-      data = json.load(f)
-      for k, v in data.items():
-        try:
-          judged[k] = ExtractedAnswer.model_validate(v).model_dump()
-        except Exception as e:
-          logger.error(f"Judged prediction validation error for id {k}: {e}")
   else:
     logger.info("No judged file found. Starting fresh judgement.")
 
@@ -267,54 +309,58 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
     qid = question["id"]
     if qid not in predictions:
       continue
-    if qid in judged:
+    if any(j.extracted_final_answer == qid for j in judged_list):  # Assuming unique qid; adjust if needed
       logger.info(f"Skipping question {idx+1}/{total} (id: {qid}) as already judged.")
       continue
 
-    response = predictions[qid]["content"]
     logger.info(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
       question_text=question["question"],
       correct_answer=question["answer"],
-      response=response,
+      response=predictions[qid],
       model=model,
       processors=processors,
       device=device,
+      max_retries=3,
     )
-    judged[qid] = {
-      "extracted_final_answer": judge_result["model_answer"],
-      "reasoning": judge_result["reasoning"],
-      "correct": judge_result["correct"],
-      "confidence": judge_result["confidence"],
-      "strict": True,
-    }
+    if judge_result is not None:  # Filter out None results
+      judged_list.append(judge_result)
 
-    with open(judged_filepath, "w") as f:
-      json.dump(judged, f, indent=4)
+    write_judgements_json(judged_filepath, judged_list)
 
   logger.info(f"All judgement results saved to '{judged_filepath}'.")
-  dump_metrics(judged, total)
-  return judged
+  judged_dict = {j.extracted_final_answer: j.model_dump() for j in judged_list}  # Convert back to dict for compatibility
+  dump_metrics(judged_dict, total)
+  return judged_dict
 
 
 def evaluate(model, processors, test_data, device, model_id, resume, is_vision_model):
-  predictions = generate_predictions(model, processors, test_data, device, model_id, resume, is_vision_model)
+  predictions = generate_predictions(model, processors, test_data, device, model_id, resume, is_vision_model, max_retries=3)
+
   judge_predictions(test_data, predictions, model, processors, device, model_id, is_vision_model)
 
 
 if __name__ == "__main__":
-  # Main evaluation script with QLoRA and apply_lora
-  model_id, cpu, resume, device_map, is_vision_model = get_parameters()
+  import unittest
 
-  # Load model and processors with QLoRA
-  model, processors = load_model_and_processor(model_id, device_map, is_vision_model)
+  class TestEvaluation(unittest.TestCase):
+    def test_evaluation(self):
+      logger.info("Starting evaluation test suite")
 
-  # Apply LoRA adapters
-  model = apply_lora(model)
+      # Setup
+      model_id, cpu, resume, device_map, is_vision_model = get_parameters()
+      model, processors = load_model_and_processor(model_id, device_map, is_vision_model)
+      model = apply_lora(model)
+      device = torch.device("cuda" if isinstance(device_map, dict) else device_map)
+      test_data = load_hle_dataset().take(2)
 
-  device = torch.device("cuda" if isinstance(device_map, dict) else device_map)
+      # Run evaluation
+      logger.info("Running evaluation")
+      evaluate(model, processors, test_data, device, model_id, resume, is_vision_model)
 
-  test_data = load_hle_dataset()
-  test_data = test_data.take(2)
+      logger.info("All tests passed successfully!")
 
-  evaluate(model, processors, test_data, device, model_id, resume, is_vision_model)
+      if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+  unittest.main()

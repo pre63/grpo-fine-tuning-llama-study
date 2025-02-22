@@ -11,4 +11,4 @@ if __name__ == "__main__":
   device = torch.device("cuda" if isinstance(device_map, dict) else device_map)
   dataset = load_hle_dataset()
 
-  evaluate(model, processors, dataset, device, model_id, resume)
+  evaluate(model, processors, dataset, device, model_id, resume, is_vision_model)

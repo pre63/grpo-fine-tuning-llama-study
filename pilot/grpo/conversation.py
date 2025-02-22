@@ -48,12 +48,12 @@ def tokenize_example(example: Dict, processors, is_vision_model: Optional[bool] 
 
 def tokenize_prompt(processors, conversation: List[Dict], images: List[PIL_Image.Image], is_vision_model: Optional[bool] = None):
   text = processors["text"]
-  vision = processors["vision"] if is_vision_model else None
 
   prompt = text.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
   images_input = images if images and any(img is not None for img in images) else None
 
   if is_vision_model and images_input:
+    vision = processors["vision"]
     assert len(images_input) > 0, "At least one image must be provided for vision model"
     assert type(vision).__name__ == "MllamaProcessor", f"Processor must be MllamaProcessor for vision model, got {type(vision).__name__}"
 

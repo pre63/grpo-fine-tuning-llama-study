@@ -6,15 +6,7 @@ from typing import Dict, Tuple, Union
 import torch
 from peft import LoraConfig, get_peft_model
 from PIL import Image
-from transformers import (
-  AutoModelForCausalLM,
-  AutoTokenizer,
-  BitsAndBytesConfig,
-  LlamaForCausalLM,
-  MllamaForConditionalGeneration,
-  MllamaProcessor,
-  PreTrainedTokenizerBase,
-)
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, LlamaForCausalLM, MllamaForConditionalGeneration, MllamaProcessor
 
 # Set PyTorch memory optimization
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -54,19 +46,28 @@ def load_model_and_processor(model_id: str, device_map: Union[str, Dict[str, int
 
 
 def ensure_padding_token(processor, model_id: str) -> None:
-  """Ensure the processor has a valid padding token."""
-
-  if hasattr(processor, "tokenizer"):
-    if processor.tokenizer.pad_token is None:
-      processor.tokenizer.pad_token = processor.tokenizer.bos_token or "<pad>"
-    processor.tokenizer.pad_token_id = processor.tokenizer.convert_tokens_to_ids(processor.tokenizer.pad_token)
-    processor.pad_token = processor.tokenizer.pad_token
-    processor.pad_token_id = processor.tokenizer.pad_token_id
-  elif processor.pad_token is None:
-    processor.pad_token = processor.bos_token or "<pad>"
+  """Ensure the processor has a valid padding token and left padding."""
+  logger.info(f"Ensuring padding token for {model_id}")
+  if hasattr(processor, "tokenizer"):  # MllamaProcessor case
+    tokenizer = processor.tokenizer
+    if tokenizer.pad_token is None:
+      tokenizer.pad_token = tokenizer.eos_token or "<pad>"
+      logger.info(f"Set tokenizer.pad_token to {tokenizer.pad_token}")
+    tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+    tokenizer.padding_side = "left"  # Required by GRPOTrainer
+    processor.pad_token = tokenizer.pad_token  # Sync top-level
+    processor.pad_token_id = tokenizer.pad_token_id
+    padding_side = tokenizer.padding_side  # Use tokenizer's attribute
+  else:  # AutoTokenizer case
+    if processor.pad_token is None:
+      processor.pad_token = processor.eos_token or "<pad>"
+      logger.info(f"Set processor.pad_token to {processor.pad_token}")
     processor.pad_token_id = processor.convert_tokens_to_ids(processor.pad_token)
-  processor.model_name = model_id
+    processor.padding_side = "left"  # Required by GRPOTrainer
+    padding_side = processor.padding_side  # Direct attribute
 
+  processor.model_name = model_id
+  logger.info(f"Padding token: {processor.pad_token}, ID: {processor.pad_token_id}, Side: {padding_side}")
   return processor
 
 

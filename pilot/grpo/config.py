@@ -5,7 +5,7 @@ import torch
 from trl import GRPOConfig
 
 
-def get_config(model_id: str, device_map: Union[Dict, str], max_prompt_length: int = None, max_completion_length: int = None):
+def get_config(model_id: str, device_map: Union[Dict, str] = "cpu", max_prompt_length: int = None, max_completion_length: int = None):
   is_cuda = isinstance(device_map, dict)
   date_path = datetime.now().strftime("%Y-%m-%d-%H-%M")
 

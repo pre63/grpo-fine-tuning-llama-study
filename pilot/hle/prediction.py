@@ -22,9 +22,44 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-SYSTEM_EXACT_ANSWER = "Your response should be in the following format:\nExplanation: {your explanation for your final answer}\nExact Answer: {your succinct, final answer}\nConfidence: {your confidence score between 0% and 100% for your answer}"
+SYSTEM_EXACT_ANSWER = """
+Your response must be a valid JSON object containing the following fields:
 
-SYSTEM_MC = "Your response should be in the following format:\nExplanation: {your explanation for your answer choice}\nAnswer: {your chosen answer}\nConfidence: {your confidence score between 0% and 100% for your answer}"
+{
+  "explanation": "{your explanation for your final answer}",
+  "answer": "{your succinct, exact, final answer}",
+  "confidence": "{your confidence score as an integer between 0 and 100}"
+}
+
+Example:
+{
+  "explanation": "The problem involves calculating 2 + 2, which is a simple arithmetic operation.",
+  "answer": "4",
+  "confidence": "100"
+}
+
+Ensure the output is properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
+"""
+
+
+SYSTEM_MC = """
+Your response must be a valid JSON object containing the following fields:
+
+{
+  "explanation": "{your explanation for your answer choice}",
+  "answer": "{your chosen answer}",
+  "confidence": "{your confidence score as an integer between 0 and 100}"
+}
+
+Example:
+{
+  "explanation": "The question asks for the capital of France, and among the options, Paris is the correct city.",
+  "answer": "Paris",
+  "confidence": "95"
+}
+
+Ensure the output is properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
+"""
 
 
 def get_system_prompt(question):

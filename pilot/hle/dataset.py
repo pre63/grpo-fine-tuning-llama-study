@@ -13,6 +13,11 @@ def load_and_split_dataset(test_size=0.3, tokenize_example=None, processors=None
   train_data = data["train"]
   test_data = data["test"]
 
+  # filter the dataset to only include examples with out images
+  if not is_vision_model:
+    train_data = train_data.filter(lambda x: x["image"] == "")
+    test_data = test_data.filter(lambda x: x["image"] == "")
+
   if processors is None or tokenize_example is None:
     return train_data, test_data
 

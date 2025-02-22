@@ -23,87 +23,133 @@ SOFTWARE.
 """
 
 import math
+from typing import Dict
 
 import numpy as np
 
-JUDGE_PROMPT = """Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
+JUDGE_PROMPT = """
+Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
 
 [question]: {question}
 
 [response]: {response}
 
-Your judgement must be in the format and criteria specified below:
-
-extracted_final_answer: The final exact answer extracted from the [response]. Put the extracted answer as 'None' if there is no exact, final answer to extract from the response.
-
 [correct_answer]: {correct_answer}
 
-reasoning: Explain why the extracted_final_answer is correct or incorrect based on [correct_answer], focusing only on if there are meaningful differences between [correct_answer] and the extracted_final_answer. Do not comment on any background to the problem, do not attempt to solve the problem, do not argue for any answer different than [correct_answer], focus only on whether the answers match.
+Your judgement must be a valid JSON object containing the following fields:
 
-correct: Answer 'yes' if extracted_final_answer matches the [correct_answer] given above, or is within a small margin of error for numerical problems. Answer 'no' otherwise, i.e. if there if there is any inconsistency, ambiguity, non-equivalency, or if the extracted answer is incorrect.
+{
+  "extracted_final_answer": "{The final exact answer extracted from the [response]. Put 'None' if there is no exact, final answer to extract from the response}",
+  "reasoning": "{Explain why the extracted_final_answer is correct or incorrect based on [correct_answer], focusing only on if there are meaningful differences between [correct_answer] and the extracted_final_answer. Do not comment on background, do not solve the problem, do not argue for a different answer, focus only on whether the answers match}",
+  "correct_yes_no": "{Answer 'yes' if extracted_final_answer matches [correct_answer] or is within a small margin of error for numerical problems, 'no' if there is any inconsistency, ambiguity, non-equivalency, or if the extracted answer is incorrect}",
+  "confidence": "{The confidence score as an integer between 0 and 100 extracted from [response]. Use 100 if no confidence score is available}"
+}
+
+Example:
+{
+  "extracted_final_answer": "4",
+  "reasoning": "The extracted answer '4' matches the correct answer '4' exactly.",
+  "correct_yes_no": "yes",
+  "confidence": "100"
+}
+
+Another Example:
+{
+  "extracted_final_answer": "None",
+  "reasoning": "No explicit final answer was provided in the response.",
+  "correct_yes_no": "no",
+  "confidence": "100"
+}
+
+Ensure the output is properly formatted JSON with double-quoted keys and values, and 'confidence' as an integer (no % symbol).
+"""
 
 
-confidence: The extracted confidence score between 0|\%| and 100|\%| from [response]. Put 100 if there is no confidence score available."""
-
-
-# source: https://github.com/hendrycks/outlier-exposure/blob/master/utils/calibration_tools.py
 def calib_err(confidence, correct, p="2", beta=100):
-  # beta is target bin size
+  """
+    Calculate calibration error for confidence scores against correctness.
+
+    Args:
+        confidence (np.ndarray): Array of confidence scores.
+        correct (np.ndarray): Array of boolean correctness values.
+        p (str): Norm type ('1', '2', or 'infty'). Defaults to '2'.
+        beta (int): Target bin size. Defaults to 100.
+
+    Returns:
+        float: Calibration error, or 0.0 if no data or invalid input.
+    """
+  if not isinstance(confidence, np.ndarray) or not isinstance(correct, np.ndarray) or len(confidence) == 0 or len(confidence) != len(correct):
+    return 0.0  # Return 0 for invalid or empty input
+
+  # Sort confidence and correct arrays
   idxs = np.argsort(confidence)
   confidence = confidence[idxs]
   correct = correct[idxs]
-  bins = [[i * beta, (i + 1) * beta] for i in range(len(confidence) // beta)]
-  bins[-1] = [bins[-1][0], len(confidence)]
+
+  # Calculate number of bins, ensuring at least one if data exists
+  num_bins = max(1, len(confidence) // beta)
+  bins = [[i * beta, min((i + 1) * beta, len(confidence))] for i in range(num_bins)]
 
   cerr = 0
   total_examples = len(confidence)
-  for i in range(len(bins) - 1):
-    bin_confidence = confidence[bins[i][0] : bins[i][1]]
-    bin_correct = correct[bins[i][0] : bins[i][1]]
+  for bin_start, bin_end in bins:
+    bin_confidence = confidence[bin_start:bin_end]
+    bin_correct = correct[bin_start:bin_end]
     num_examples_in_bin = len(bin_confidence)
 
     if num_examples_in_bin > 0:
-      difference = np.abs(np.nanmean(bin_confidence) - np.nanmean(bin_correct))
+      avg_confidence = np.nanmean(bin_confidence)
+      avg_correct = np.nanmean(bin_correct)
+      difference = np.abs(avg_confidence - avg_correct)
 
       if p == "2":
         cerr += num_examples_in_bin / total_examples * np.square(difference)
       elif p == "1":
         cerr += num_examples_in_bin / total_examples * difference
-      elif p == "infty" or p == "infinity" or p == "max":
+      elif p in ["infty", "infinity", "max"]:
         cerr = np.maximum(cerr, difference)
       else:
-        assert False, "p must be '1', '2', or 'infty'"
+        raise ValueError("p must be '1', '2', or 'infty'")
 
-  if p == "2":
-    cerr = np.sqrt(cerr)
-
-  return cerr
+  return np.sqrt(cerr) if p == "2" else cerr
 
 
-def dump_metrics(predictions, n):
+def dump_metrics(predictions: Dict[str, Dict], n: int) -> None:
+  """
+    Compute and print evaluation metrics for predictions.
+
+    Args:
+        predictions (Dict[str, Dict]): Dictionary of prediction results keyed by question ID.
+        n (int): Total number of questions.
+
+    Returns:
+        None: Prints metrics to console.
+    """
   correct = []
   confidence = []
+
   for k, v in predictions.items():
-    if "judge_response" in v:
-      judge_response = v["judge_response"]
-      correct.append("yes" in judge_response["correct"])
-      confidence.append(judge_response["confidence"])
+    if "correct_yes_no" in v and "confidence" in v:  # Check for direct fields instead of nested judge_response
+      correct.append(v["correct_yes_no"] == "yes")
+      confidence.append(int(v["confidence"]))
     else:
       print(f"Missing judge response for {k}, you should rerun the judge")
 
-  correct = np.array(correct)
-  confidence = np.array(confidence)
+  correct = np.array(correct, dtype=bool)
+  confidence = np.array(confidence, dtype=float)
 
-  # sometimes model collapses on same questions
   if len(correct) != n:
     print(f"Available predictions: {len(correct)} | Total questions: {n}")
 
-  if n == 0:
-    print("No predictions to evaluate")
+  if len(correct) == 0:
+    print("No valid judgments to evaluate")
+    print("*** Metrics ***")
+    print(f"Accuracy: N/A | n = {n}")
+    print("Calibration Error: N/A")
     return
+
   accuracy = round(100 * sum(correct) / n, 2)
-  # Wald estimator, 95% confidence interval
-  confidence_half_width = round(1.96 * math.sqrt(accuracy * (100 - accuracy) / n), 2)
+  confidence_half_width = round(1.96 * math.sqrt(accuracy * (100 - accuracy) / n), 2) if n > 0 else 0
   calibration_error = round(calib_err(confidence, correct, p="2", beta=100), 2)
 
   print("*** Metrics ***")
@@ -112,5 +158,13 @@ def dump_metrics(predictions, n):
 
 
 def format_judge_prompt(question, answer, prediction):
-  judge_prompt = JUDGE_PROMPT.format(question=question, correct_answer=answer, response=prediction)
+  replacements = {
+    "{question}": question,
+    "{correct_answer}": answer,
+    "{response}": prediction,
+  }
+  judge_prompt = JUDGE_PROMPT
+  for key, value in replacements.items():
+    judge_prompt = judge_prompt.replace(key, value)
+
   return judge_prompt

@@ -1,29 +1,64 @@
 .PHONY: install test fix rl eval
 
 # Use CPU instead of GPU
-CPU = True
+export CPU=True
 
 # Model to use
-MODEL="meta-llama/Llama-3.2-11B-Vision-Instruct"
+export MODEL=meta-llama/Llama-3.2-11B-Vision-Instruct
 
 # Resume from a previous run
-RESUME=True
+export RESUME=True
+
+# WandB 
+export WANDB_SILENT=true
+export WANDB_API_KEY=4b28b7410bc92bce660b446e56bd56f33dca3e44
+
+# Hugging Face
+export HF_TOKEN=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
+export TOKENIZERS_PARALLELISM=false
+
+
 
 test:
-	@$(MAKE) fix
-	@python -m grpo.conversation
-	@python -m grpo.model
-	@python -m grpo.trainer
 	@if [ "$(CPU)" = "False" ]; then \
 		python -m grpo.eval; \
 	fi
+
+	@python -m grpo.trainer
+	@python -m grpo.conversation
+	@python -m grpo.model
 	@python -m grpo.reward
 	@python -m grpo.hardware
 	@python -m grpo.config
 	@python -m grpo.image_utils
 
+env:
+	@python3 -m venv ../.venv
+
+colab:
+	@pip install triton
+
+	# Uninstall conflicting packages
+	@pip uninstall -y tensorflow torch torch-xla accelerate trl transformers
+
+	# Install compatible versions
+	@pip install torch==2.4.0 torch-xla==2.4 accelerate==0.34.0 trl==0.15.1 transformers==4.46.0 tensorflow-cpu
+
+	# Restart runtime (manual step in Colab), then test
+	@python -c "from trl import GRPOTrainer; print('Success')"
+	@pip install triton
+
+	# Uninstall conflicting packages
+	@pip uninstall -y tensorflow torch torch-xla accelerate trl transformers
+
+	# Install compatible versions
+	@pip install torch==2.4.0 torch-xla==2.4 accelerate==0.34.0 trl==0.15.1 transformers==4.46.0 tensorflow-cpu
+
+	# Restart runtime (manual step in Colab), then test
+	@python -c "from trl import GRPOTrainer; print('Success')"
+
+
 install:
-	@python3 -m venv .venv
 	@pip install -U -r requirements.txt
 
 fix:

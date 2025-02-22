@@ -9,7 +9,7 @@ def is_vision_model(model_id: str) -> bool:
     "meta-llama/Llama-3.2-1B-Instruct": False,
     "meta-llama/Llama-3.2-3B-Instruct": False,
     "meta-llama/Llama-3.2-11B-Vision-Instruct": True,
-    "meta-llama/Llama-3.2-90B-Vision-Instruct": True,
+    "meta-llama/Llama-3.2-70B-Vision-Instruct": True,
   }
 
   return LLAMA_MODELS.get(model_id, False)

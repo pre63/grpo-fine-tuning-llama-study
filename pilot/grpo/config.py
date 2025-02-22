@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Dict, Union
 
-import torch
 from trl import GRPOConfig
 
 
@@ -11,20 +10,18 @@ def get_config(model_id: str, device_map: Union[Dict, str] = "cpu", max_prompt_l
 
   return GRPOConfig(
     output_dir=f".grpo_output/{model_id}_{date_path}",
-    learning_rate=1e-4,
-    per_device_train_batch_size=2,
-    per_device_eval_batch_size=2,
-    num_train_epochs=2,
-    num_generations=2,
+    learning_rate=5e-5,
+    per_device_train_batch_size=4,
+    per_device_eval_batch_size=4,
+    num_train_epochs=5,
+    num_generations=5,
     max_prompt_length=max_prompt_length,
     max_completion_length=max_completion_length,
-    temperature=0.7,
+    temperature=0.5,
     beta=0.1,
     remove_unused_columns=False,
     log_completions=True,
-    # fp16=is_cuda,  # Enable mixed precision for CUDA
-    # no_cuda=not is_cuda,  # Explicitly set based on device
-    # report_to="none",  # Minimize logging overhead
+    fp16=is_cuda,  # Enable mixed precision for CUDA
   )
 
 

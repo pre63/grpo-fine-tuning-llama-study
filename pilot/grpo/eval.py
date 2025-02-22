@@ -119,6 +119,9 @@ def generate_and_parse_json(
     with torch.no_grad():
       raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
       decoded = decode(processor, inputs["input_ids"], raw_outputs)
+      del raw_outputs  # Free memory immediately
+      if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
       # Fix incomplete JSON by adding closing bracket if missing
       if not decoded.strip().endswith("}"):
@@ -237,8 +240,10 @@ def compose_prediction(model, processors, question, device, max_new_tokens=2048,
   logger.info(f"Input shape: {inputs['input_ids'].shape}")
 
   content = generate_and_parse_json(model, processor, inputs, prompt, PredictionResponse, max_new_tokens, max_retries)
-
-  return content  # PredictionResponse, str, or None
+  del inputs, images  # Free memory
+  if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+  return content
 
 
 def generate_predictions(model, processors, questions, device, model_id, resume, is_vision_model, max_retries=3):

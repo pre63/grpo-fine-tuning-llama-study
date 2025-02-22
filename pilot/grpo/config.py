@@ -4,7 +4,7 @@ from typing import Dict, Union
 from trl import GRPOConfig
 
 
-def get_config(model_id: str, device_map: Union[Dict, str] = "cpu", max_prompt_length: int = None, max_completion_length: int = None):
+def get_config(model_id: str, device_map: Union[Dict, str] = "cpu", max_prompt_length=None, max_completion_length=None):
   is_cuda = isinstance(device_map, dict)
   date_path = datetime.now().strftime("%Y-%m-%d-%H-%M")
 
@@ -21,7 +21,8 @@ def get_config(model_id: str, device_map: Union[Dict, str] = "cpu", max_prompt_l
     beta=0.1,
     remove_unused_columns=False,
     log_completions=True,
-    fp16=is_cuda,  # Enable mixed precision for CUDA
+    fp16=is_cuda,
+    gradient_checkpointing=True,
   )
 
 

@@ -317,3 +317,4 @@ pilot/.grpo_output/*
 pilot/wandb/*
 
 Report.bcf-SAVE-ERROR
+pilot/all

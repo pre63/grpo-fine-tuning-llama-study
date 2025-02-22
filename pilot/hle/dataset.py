@@ -1,4 +1,4 @@
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from torch.nn.utils.rnn import pad_sequence
 
 

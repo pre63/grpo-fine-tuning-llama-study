@@ -4,9 +4,11 @@ import warnings
 from typing import Dict, Tuple, Union
 
 import torch
-from peft import LoraConfig, get_peft_model
+from peft import PeftModelForCausalLM, get_peft_model
 from PIL import Image
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, LlamaForCausalLM, MllamaForConditionalGeneration, MllamaProcessor
+from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaForCausalLM, MllamaForConditionalGeneration, MllamaProcessor
+
+from grpo.config import get_bits_and_bytes_config, get_lora_config
 
 # Set PyTorch memory optimization
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -20,20 +22,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_model_and_processor(model_id: str, device_map: Union[str, Dict[str, int]], is_vision_model) -> Tuple:
-  logger.info("Entering load_model_and_processor")
-  quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
+def get_model(model_id: str, device_map, is_vision_model: bool) -> Union[LlamaForCausalLM, MllamaForConditionalGeneration]:
+  logger.info("Entering get_model")
   model_class = MllamaForConditionalGeneration if is_vision_model else AutoModelForCausalLM
 
   model = model_class.from_pretrained(
     model_id,
     torch_dtype=torch.bfloat16 if isinstance(device_map, dict) or device_map == "mps" else torch.float16,
     device_map=device_map,
-    quantization_config=quantization_config if isinstance(device_map, dict) or device_map == "mps" else None,
+    quantization_config=get_bits_and_bytes_config() if isinstance(device_map, dict) or device_map == "mps" else None,
   )
 
-  if device_map == "cpu":
-    print("Warning: QLoRA with bitsandbytes requires GPU/MPS. Using float16 + LoRA on CPU.")
+  model = apply_lora(model, device_map)  # Apply LoRA if needed
+
+  logger.info(f"Exiting get_model with model type: {type(model)}")
+
+  return model
+
+
+def get_processors(model_id: str, is_vision_model: bool) -> Dict[str, Union[AutoTokenizer, MllamaProcessor]]:
+  logger.info("Entering get_processors")
 
   vision = None
   if is_vision_model:
@@ -41,8 +49,8 @@ def load_model_and_processor(model_id: str, device_map: Union[str, Dict[str, int
   text = ensure_padding_token(AutoTokenizer.from_pretrained(model_id), model_id)
   processors = {"text": text, "vision": vision}
 
-  logger.info(f"Exiting load_model_and_processor with model type: {type(model).__name__}, processors type: {type(processors)}")
-  return model, processors
+  logger.info(f"Exiting get_processors with processors type: {type(processors)}")
+  return processors
 
 
 def ensure_padding_token(processor, model_id: str) -> None:
@@ -71,9 +79,9 @@ def ensure_padding_token(processor, model_id: str) -> None:
   return processor
 
 
-def apply_lora(model) -> object:
+def apply_lora(model, device_map) -> object:
   logger.info("Entering apply_lora")
-  lora_config = LoraConfig(r=2, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
+  lora_config = get_lora_config(device_map)
   model_with_lora = get_peft_model(model, lora_config)
 
   logger.info("Exiting apply_lora")
@@ -95,11 +103,10 @@ if __name__ == "__main__":
       logger.info("Starting model integration test")
       model_id, _, _, device_map, is_vision_model = get_parameters()
 
-      model, processors = load_model_and_processor(model_id, device_map, is_vision_model)
-      expected_model_class = MllamaForConditionalGeneration if is_vision_model else LlamaForCausalLM
-      self.assertIsInstance(model, expected_model_class)  # Dynamic model class check
-      model_with_lora = apply_lora(model)
-      self.assertTrue(hasattr(model_with_lora, "peft_config"))  # Check LoRA applied
+      model = get_model(model_id, device_map, is_vision_model)
+      processors = get_processors(model_id, is_vision_model)
+      self.assertIsInstance(model, PeftModelForCausalLM)
+      self.assertTrue(hasattr(model, "peft_config"))  # Check LoRA applied
 
       # Test tokenization with the processors, adapting for vision vs non-vision
       if is_vision_model:

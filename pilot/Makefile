@@ -4,7 +4,7 @@
 export CPU=True
 
 # Model to use
-export MODEL=meta-llama/Llama-3.2-11B-Vision-Instruct
+export MODEL=meta-llama/Llama-3.2-1B-Instruct
 
 # Resume from a previous run
 export RESUME=True
@@ -20,11 +20,11 @@ export TOKENIZERS_PARALLELISM=false
 
 
 test:
+	@python -m grpo.trainer
 	@if [ "$(CPU)" = "False" ]; then \
 		python -m grpo.eval; \
 	fi
 
-	@python -m grpo.trainer
 	@python -m grpo.conversation
 	@python -m grpo.model
 	@python -m grpo.reward

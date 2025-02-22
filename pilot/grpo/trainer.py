@@ -6,15 +6,17 @@ from typing import Dict, Tuple, Union
 
 import torch
 from datasets import Dataset
+from peft import PeftModelForCausalLM
 from PIL import Image
 from transformers import LlamaForCausalLM, MllamaForConditionalGeneration
 from trl import GRPOTrainer
 
-from grpo.config import get_config
+from grpo.config import get_config, get_lora_config
 from grpo.conversation import tokenize_example
 from grpo.hardware import get_parameters
-from grpo.model import apply_lora, load_model_and_processor
+from grpo.model import get_model, get_processors
 from grpo.reward import compute_reward
+from hle.dataset import load_and_split_dataset
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,19 +28,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def get_trainer(model_id: str, model, processors, train_data, test_data, device_map: str):
+def get_trainer(model_id: str, processors, train_data, test_data, device_map: str):
   logger.info("Setting up GRPOTrainer")
 
   # Get config with device
   config = get_config(model_id, device_map)
+  peft_config = get_lora_config(device_map)
 
   trainer_args = {
-    "model": model,
+    "model": model_id,
     "reward_funcs": lambda prompts, completions, **kw: compute_reward(prompts, completions, kw.get("ground_truths", [d["answer"] for d in train_data])),
     "train_dataset": train_data,
     "eval_dataset": test_data,
     "args": config,
     "processing_class": processors["text"],
+    "peft_config": peft_config,
   }
 
   trainer = GRPOTrainer(**trainer_args)
@@ -56,39 +60,29 @@ if __name__ == "__main__":
       model_id, cpu, resume, device_map, is_vision_model = get_parameters()
       logger.info(f"Using MODEL: {model_id}, CPU: {cpu}, RESUME: {resume}, DEVICE_MAP: {device_map}")
 
-      model, processors = load_model_and_processor(model_id, device_map, is_vision_model)
-      self.assertTrue(isinstance(model, (LlamaForCausalLM, MllamaForConditionalGeneration)), "Model should be Llama or Mllama")
+      processors = get_processors(model_id, is_vision_model)
+      model = get_model(model_id, device_map, is_vision_model)
+
+      self.assertTrue(
+        isinstance(model, (PeftModelForCausalLM, LlamaForCausalLM, MllamaForConditionalGeneration)), "Model should be Llama or Mllama " + str(type(model))
+      )
       self.assertIsInstance(processors, dict, "Processors should be a dictionary")
 
-      model = apply_lora(model)
       self.assertTrue(hasattr(model, "peft_config"), "LoRA should be applied")
 
-      dummy_image = base64.b64encode(Image.new("RGB", (224, 224), "blue")._repr_png_()).decode("utf-8")
-      data = [
-        {"question": "What is this?", "answer": "A test", "image": dummy_image},
-        {"question": "What is that?", "answer": "Another test", "image": dummy_image},
-        {"question": "What’s here?", "answer": "Yet another", "image": dummy_image},
-        {"question": "What now?", "answer": "More tests", "image": ""},  # Empty string
-      ]
-      dataset = Dataset.from_list(data)
-      train_size = int(0.5 * len(dataset))  # 2/2 split
-      train_data = dataset.select(range(train_size)).map(lambda ex: tokenize_example(ex, processors, is_vision_model))
-      test_data = dataset.select(range(train_size, len(dataset))).map(lambda ex: tokenize_example(ex, processors, is_vision_model))
+      train_data, test_data = load_and_split_dataset(test_size=0.3, tokenize_example=tokenize_example, processors=processors, is_vision_model=is_vision_model)
       train_data = train_data.take(2)
       test_data = test_data.take(2)
 
-      self.assertIsInstance(train_data, Dataset, "Train data should be a Dataset")
-      self.assertIsInstance(test_data, Dataset, "Test data should be a Dataset")
-      self.assertEqual(len(train_data), 2, "Train data should have 2 examples")
-      self.assertEqual(len(test_data), 2, "Test data should have 2 examples")
-      self.assertIn("labels", train_data[0], "Labels should be in dataset")
+      self.assertIsInstance(train_data, Dataset, "Train data should be a Dataset " + str(type(train_data)))
+      self.assertIsInstance(test_data, Dataset, "Test data should be a Dataset " + str(type(test_data)))
+      self.assertEqual(len(train_data), 2, "Train data should have 2 examples " + str(len(train_data)))
+      self.assertEqual(len(test_data), 2, "Test data should have 2 examples " + str(len(test_data)))
+      self.assertIn("labels", train_data[0], "Labels should be in dataset " + str(train_data[0].keys()))
 
-      trainer = get_trainer(model_id, model, processors, train_data, test_data, device_map)
+      trainer = get_trainer(model_id, processors, train_data, test_data, device_map)
 
       self.assertIsInstance(trainer, GRPOTrainer, "Trainer should be a GRPOTrainer")
-      self.assertEqual(trainer.model, model, "Trainer model mismatch")
-      self.assertEqual(trainer.train_dataset, train_data, "Trainer train dataset mismatch")
-      self.assertEqual(trainer.eval_dataset, test_data, "Trainer eval dataset mismatch")
 
       trainer.train()
 

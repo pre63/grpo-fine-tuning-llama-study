@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Dict, List, Literal, Optional, Union
 
 import torch
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 from grpo.conversation import build_conversation
 from grpo.hardware import get_parameters
 from grpo.image_utils import decode_base64_image
-from grpo.model import apply_lora, load_model_and_processor
+from grpo.model import get_model, get_processors
 from hle.judge import dump_metrics, format_judge_prompt
 
 # Set PyTorch memory optimization
@@ -363,8 +364,9 @@ if __name__ == "__main__":
 
       # Setup
       model_id, cpu, resume, device_map, is_vision_model = get_parameters()
-      model, processors = load_model_and_processor(model_id, device_map, is_vision_model)
-      model = apply_lora(model)
+      model = get_model(model_id, device_map, is_vision_model)
+      processors = get_processors(model_id, is_vision_model)
+
       device = torch.device("cuda" if isinstance(device_map, dict) else device_map)
       test_data = load_hle_dataset().take(2)
 

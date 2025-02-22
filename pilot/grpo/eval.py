@@ -75,8 +75,12 @@ def normalize_text(text):
 
 
 def get_output_filename(model_name):
-  from datetime import datetime
+  # Check environment variable first
+  output_filename = os.getenv("OUTPUT_FILENAME")
+  if output_filename:
+    return output_filename
 
+  # Fallback to original logic
   date_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
   os.makedirs(".predictions", exist_ok=True)
   safe_name = model_name.replace("/", "_").replace(" ", "_")
@@ -84,11 +88,16 @@ def get_output_filename(model_name):
 
 
 def get_judged_filename(model_name):
-  from datetime import datetime
+  # Check environment variable first
+  judged_filename = os.getenv("JUDGED_FILENAME")
+  if judged_filename:
+    return judged_filename
 
+  # Fallback to original logic
   date_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
   os.makedirs(".judged", exist_ok=True)
-  return os.path.join(".judged", f"{model_name.replace('/', '_')}_{date_time}_judged.json")
+  safe_name = model_name.replace("/", "_").replace(" ", "_")
+  return os.path.join(".judged", f"{safe_name}_{date_time}_judged.json")
 
 
 # --------------------------------------------------

@@ -5,8 +5,8 @@ black @ git+https://github.com/pre63/black.git
 black[jupyter] @ git+https://github.com/pre63/black.git
 
 accelerate
+bitsandbytes
 datasets
-ipykernel
 jsonlines
 numpy
 nltk

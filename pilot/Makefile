@@ -11,31 +11,31 @@ RESUME=True
 
 test:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python -m grpo.conversation
-	@. ../.venv/bin/activate && python -m grpo.model
-	@. ../.venv/bin/activate && python -m grpo.trainer
+	@python -m grpo.conversation
+	@python -m grpo.model
+	@python -m grpo.trainer
 	@if [ "$(CPU)" = "False" ]; then \
-		. ../.venv/bin/activate && python -m grpo.eval; \
+		python -m grpo.eval; \
 	fi
-	@. ../.venv/bin/activate && python -m grpo.reward
-	@. ../.venv/bin/activate && python -m grpo.hardware
-	@. ../.venv/bin/activate && python -m grpo.config
-	@. ../.venv/bin/activate && python -m grpo.image_utils
+	@python -m grpo.reward
+	@python -m grpo.hardware
+	@python -m grpo.config
+	@python -m grpo.image_utils
 
 install:
-	@python3 -m venv ../.venv
-	@. ../.venv/bin/activate && pip install -U -r requirements.txt
+	@python3 -m venv .venv
+	@pip install -U -r requirements.txt
 
 fix:
-	@. ../.venv/bin/activate && isort . && black .
+	@isort . && black .
 
 rl:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python rl.py
+	@python rl.py
 
 eval:
 	@$(MAKE) fix
-	@. ../.venv/bin/activate && python eval.py
+	@python eval.py
 
 local:
 	$(MAKE) test CPU=True MODEL="meta-llama/Llama-3.2-1B-Instruct"

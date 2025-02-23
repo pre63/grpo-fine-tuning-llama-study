@@ -37,8 +37,7 @@ Example:
   "confidence": "100"
 }
 
-Ensure the output is properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
-Do not add context to the json object, only the fields.
+Ensure the output is only the properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
 """
 
 
@@ -57,8 +56,7 @@ Example:
   "confidence": "95"
 }
 
-Ensure the output is properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
-Do not add context to the json object, only the fields.
+Ensure the output is only the properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
 """
 
 

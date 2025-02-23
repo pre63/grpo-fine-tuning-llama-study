@@ -28,10 +28,10 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
 
   audit_filepath = get_audit_filename(model_id)
   existing_audit = read_audit_json(audit_filepath)
-  audit_list = existing_audit if existing_audit else []
+  audit_dict = {entry.question_id: entry.model_dump() for entry in existing_audit} if existing_audit else {}
 
-  if audit_list:
-    print(f"Found existing audit file '{audit_filepath}'. Resuming audit.")
+  if audit_dict:
+    print(f"Found existing audit file '{audit_filepath}'. Resuming audit with {len(audit_dict)} entries.")
   else:
     print("No audit file found. Starting fresh audit.")
 
@@ -47,7 +47,7 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
       print(f"Question {qid} not found in predictions or judgements. Skipping.")
       continue
 
-    if any(a.question_id == qid for a in audit_list):
+    if qid in audit_dict:
       print(f"Skipping question {idx+1}/{total} (id: {qid}) as already audited.")
       continue
 
@@ -84,14 +84,65 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
       audit=audit_result,
     )
 
-    audit_list.append(audit_entry)
-    write_audit_json(audit_filepath, audit_list)
+    audit_dict[qid] = audit_entry.model_dump()
+    try:
+      with open(audit_filepath, "w", encoding="utf-8") as f:
+        json.dump(audit_dict, f, indent=4)
+      print(f"Updated audit JSON with entry for {qid}. Total entries: {len(audit_dict)}")
+    except Exception as e:
+      print(f"Failed to write audit JSON for {qid}: {e}")
 
     if torch.cuda.is_available():
       torch.cuda.empty_cache()
 
-  print(f"All audit results saved to '{audit_filepath}'. Processed {len(audit_list)} entries.")
-  return {a.question_id: a.model_dump() for a in audit_list}
+  # Summary and Statistics
+  print("\n=== Audit Summary ===")
+  success_count = 0
+  failure_count = 0
+  false_positive_count = 0
+  false_negative_count = 0
+  total_processed = len(audit_dict)
+
+  print("Audit Successes (audit aligns with judgement):")
+  for qid, entry in audit_dict.items():
+    judgement = entry["judgement_correct_yes_no"]
+    audit = entry["audit"]
+    is_success = (judgement == "yes" and audit in ["same", "similar"]) or (judgement == "no" and audit == "different")
+    if is_success:
+      success_count += 1
+      if idx < 5:
+        print(f"- QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: '{judgement}', Audit: '{audit}'")
+
+  print("\nAudit Failures (audit contradicts judgement):")
+  for idx, (qid, entry) in enumerate(audit_dict.items()):
+    judgement = entry["judgement_correct_yes_no"]
+    audit = entry["audit"]
+    is_failure = (judgement == "yes" and audit == "different") or (judgement == "no" and audit in ["same", "similar"])
+    if is_failure:
+      failure_count += 1
+      if judgement == "no" and audit in ["same", "similar"]:
+        false_positive_count += 1
+        if idx < 5:
+          print(
+            f"- False Positive: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'no', Audit: '{audit}'"
+          )
+      elif judgement == "yes" and audit == "different":
+        false_negative_count += 1
+        if idx < 5:
+
+          print(
+            f"- False Negative: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'yes', Audit: 'different'"
+          )
+
+  print(f"\nStatistics:")
+  print(f"Total questions processed: {total_processed}")
+  print(f"Audit Successes: {success_count} ({success_count/total_processed*100:.2f}%)")
+  print(f"Audit Failures: {failure_count} ({failure_count/total_processed*100:.2f}%)")
+  print(f"False Positives (judged 'no', audited 'same'/'similar'): {false_positive_count} ({false_positive_count/total_processed*100:.2f}%)")
+  print(f"False Negatives (judged 'yes', audited 'different'): {false_negative_count} ({false_negative_count/total_processed*100:.2f}%)")
+
+  print(f"All audit results saved to '{audit_filepath}'. Processed {len(audit_dict)} entries.")
+  return audit_dict
 
 
 class AuditEntry(BaseModel):

@@ -68,7 +68,9 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
       print(f"Model output for {qid}: '{decoded}'")
       del raw_outputs
 
-    audit_result = decoded.lower().strip()
+    # remove all non-alpha characters
+    audit_result = "".join([c for c in decoded if c.isalpha()])
+    audit_result = audit_result.lower().strip()
     if audit_result not in ["same", "different", "similar"]:
       print(f"Invalid audit response for {qid}: '{audit_result}'. Defaulting to 'different'")
       audit_result = "different"

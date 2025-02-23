@@ -1,7 +1,5 @@
 import glob
 import json
-
-# Set up logging
 import logging
 import os
 from datetime import datetime

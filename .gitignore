@@ -311,13 +311,13 @@ TSWLatexianTemp*
 __pycache__
 .venv
 
-pilot/.model/*
-pilot/.predictions/*
-pilot/.grpo_output/*
-pilot/wandb/*
+.model
+.predictions
+.grpo_output
+wandb
+.judged
+.predictions
+.audit
 
 Report.bcf-SAVE-ERROR
 pilot/all
-
-.judged
-.predictions/

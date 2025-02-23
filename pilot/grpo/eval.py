@@ -19,7 +19,7 @@ from hle.judge import dump_metrics, format_judge_prompt
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
-# Set up logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

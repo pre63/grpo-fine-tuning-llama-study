@@ -18,6 +18,7 @@ export HF_TOKEN=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
 export TOKENIZERS_PARALLELISM=false
 
 test:
+	@python -m grpo.audit
 	@python -m grpo.eval
 	@python -m grpo.conversation
 	@python -m grpo.model
@@ -26,6 +27,9 @@ test:
 	@python -m grpo.config
 	@python -m grpo.image_utils
 	@python -m grpo.trainer
+
+audit:
+	@python audit.py
 
 env:
 	@python3 -m venv ../.venv

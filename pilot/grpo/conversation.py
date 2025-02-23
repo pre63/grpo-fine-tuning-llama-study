@@ -7,7 +7,6 @@ from grpo.image_utils import decode_base64_image
 from grpo.model import ensure_padding_token
 from hle.prediction import get_system_prompt
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

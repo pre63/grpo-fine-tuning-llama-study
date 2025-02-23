@@ -34,31 +34,18 @@ Judge whether the following [response] to [question] is correct or not based on 
 
 [response]: {response}
 
+Your judgement must be in the format and criteria specified below:
+
+extracted_final_answer: The final exact answer extracted from the [response]. Put the extracted answer as 'None' if there is no exact, final answer to extract from the response.
+
 [correct_answer]: {correct_answer}
 
-Your judgement must be a valid JSON object containing the following fields:
-
+Please provide your judgment in the following JSON format:
 {
   "extracted_final_answer": "{The final exact answer extracted from the [response]. Put 'None' if there is no exact, final answer to extract from the response}",
   "reasoning": "{Explain why the extracted_final_answer is correct or incorrect based on [correct_answer], focusing only on if there are meaningful differences between [correct_answer] and the extracted_final_answer. Do not comment on background, do not solve the problem, do not argue for a different answer, focus only on whether the answers match}",
   "correct_yes_no": "{Answer 'yes' if extracted_final_answer matches [correct_answer] or is within a small margin of error for numerical problems, 'no' if there is any inconsistency, ambiguity, non-equivalency, or if the extracted answer is incorrect}",
   "confidence": "{The confidence score as an integer between 0 and 100 extracted from [response]. Use 100 if no confidence score is available}"
-}
-
-Example:
-{
-  "extracted_final_answer": "4",
-  "reasoning": "The extracted answer '4' matches the correct answer '4' exactly.",
-  "correct_yes_no": "yes",
-  "confidence": "100"
-}
-
-Another Example:
-{
-  "extracted_final_answer": "None",
-  "reasoning": "No explicit final answer was provided in the response.",
-  "correct_yes_no": "no",
-  "confidence": "100"
 }
 
 Ensure the output is properly formatted JSON with double-quoted keys and values, and 'confidence' as an integer (no % symbol).

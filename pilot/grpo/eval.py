@@ -156,35 +156,6 @@ def generate_and_parse_json(
       return None
 
 
-def _fix_incomplete_json(raw: str) -> Optional[str]:
-  """Fix incomplete or malformed JSON by seeking the object and appending "}."""
-  cleaned: str = raw.strip()
-
-  if not cleaned:
-    return None
-
-  # Find the start of the JSON object
-  start_idx = cleaned.find("{")
-  if start_idx == -1:
-    return '{"error": "no json object found"}'
-
-  # Take everything from the first { to the last }
-  last_brace_idx = cleaned.rfind("}")
-  if last_brace_idx != -1:
-    candidate = cleaned[start_idx : last_brace_idx + 1]
-    try:
-      json.loads(candidate)
-      return candidate  # If it parses, we’re done
-    except json.JSONDecodeError:
-      cleaned = candidate  # Use this as the base for fixing
-  else:
-    cleaned = cleaned[start_idx:]  # No closing brace, start fixing from here
-
-  # Trim trailing junk and always append "}"
-  cleaned = cleaned.rstrip("\"}:, '`\t\n") + '"\n}'
-  return cleaned
-
-
 # --------------------------------------------------
 # JSON Reader/Writer Functions for Specific Pydantic Types
 # --------------------------------------------------
@@ -396,6 +367,45 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
   return judged_dict
 
 
+def _fix_incomplete_json(raw: str) -> Optional[str]:
+  """Fix incomplete or malformed JSON, escaping control characters and appending "}."""
+  cleaned: str = raw.strip()
+  if not cleaned:
+    return None
+
+  # Find the start of the JSON object
+  start_idx = cleaned.find("{")
+  if start_idx == -1:
+    return '{"error": "no json object found"}'
+
+  # Take everything from the first { onward
+  cleaned = cleaned[start_idx:]
+
+  # Escape control characters only within quoted strings
+  def escape_control_chars(match):
+    value = match.group(0)
+    # Double invalid single backslashes not followed by valid escapes
+    value = re.sub(r'\\(?![ntrfb"\\])', r"\\\\", value)
+    return value
+
+  # Apply escaping only to content within double quotes
+  cleaned = re.sub(r".*?", escape_control_chars, cleaned, flags=re.DOTALL)
+
+  # Take up to the last } if it exists and try parsing
+  last_brace_idx = cleaned.rfind("}")
+  if last_brace_idx != -1:
+    candidate = cleaned[: last_brace_idx + 1]
+    try:
+      json.loads(candidate)
+      return candidate  # If it parses, we’re done
+    except json.JSONDecodeError:
+      pass
+
+  # Trim trailing junk and append "}"
+  cleaned = cleaned.rstrip("\"}:, '`\t\n") + '"}'
+  return cleaned
+
+
 def evaluate(model, processors, test_data, device, model_id, resume, is_vision_model):
   predictions = generate_predictions(model, processors, test_data, device, model_id, resume, is_vision_model, max_retries=3)
 
@@ -410,13 +420,11 @@ if __name__ == "__main__":
     def test_json_fixer(self):
       test_cases = [
         # Case 1: Extra closing brace
-        """
-          {
+        """{
             "explanation": "The average adult height of the population is 3 feet and 6 inches.",
             "answer": "3.06",
             "confidence": "100"
-          }
-          """,
+          }""",
         """
           ```
           {
@@ -424,8 +432,7 @@ if __name__ == "__main__":
             "answer": "3.06",
             "confidence": "100"
           }
-          ```
-          """,
+          ```""",
         # Case 2: Extra text after valid JSON
         """
           Here is the response to your query in valid json:
@@ -436,48 +443,38 @@ if __name__ == "__main__":
             "confidence": "100"
           }
           ```
-          Enjoy the solution.
-          """,
+          Enjoy the solution.""",
         # Case 3: Truncated string value
-        """
-          {
+        """{
             "explanation": "The third homotopy group is T^3.",
             "answer": "3",
             "confidence": "100
-          }
-          """,
+          }""",
         # Case 4: Completely valid JSON
-        """
-          {
+        """{
             "explanation": "All good here.",
             "answer": "yes",
             "confidence": "95"
-          }
-          """,
+          }""",
         # Case 5: Missing closing brace
-        """
-          {
+        """{
             "explanation": "Incomplete JSON",
-            "answer": "no"
-          """,
+            "answer": "no""",
         # Case 6: Empty string
         "",
         # Case 7: Trailing comma after last value
-        """
-          {
+        """{
             "explanation": "Extra comma issue",
             "answer": "yes",
             "confidence": "90",
-          }
-          """,
+          }""",
         # Case 8: Malformed number with extra brace
-        """
-          {
+        """{
             "explanation": "Height example",
             "answer": "3.06",
             "confidence": "100}
-          }
-          """,
+          }""",
+        """{"explanation": "The first nontrivial group of symmetries of the unit square is the dihedral group $D_4$, which consists of 8 elements: $4$ rotations and 4 reflections. The moduli space $X$ of nondegenerate lattices in $\\mathbb{R}^2$ with unit area is the quotient space $D_4/X$, where $X$ is the quotient space of the identity in $D_4$ by the conjugacy relation. This quotient space can be identified with the projective plane $P^1$, whose points are the equivalence classes of lines through the origin. The group $D_4$ acts on $P^1$ by translations and rotations, and this action is transitive. Therefore, the moduli space $X$ is homeomorphic to the real line $\\mathbb{R}$, and its fundamental group is isomorphic to $\\mathbb{Z}$. The first nontrivial element of the fundamental group is the element of order 2, which corresponds to the rotation by $90^\\circ$ about the origin. Therefore, the first nontrivial homology group $H_1(X, \\mathbb{Z})$ is the trivial group, which is $\\boxed{0}$.""",
       ]
 
       for idx, test in enumerate(test_cases, 1):

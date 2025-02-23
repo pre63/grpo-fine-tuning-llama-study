@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import uuid
 from datetime import datetime
 from typing import Dict, List, Literal, Optional, Union
 
@@ -52,6 +53,7 @@ class JudgementResponse(BaseModel):
 
 
 class ModelJudgement(BaseModel):
+  question_id: str
   extracted_final_answer: str
   reasoning: str
   correct_yes_no: Literal["yes", "no"]
@@ -211,8 +213,7 @@ def read_judgements_json(filepath: str) -> Optional[List[ModelJudgement]]:
 def write_judgements_json(filepath: str, judgements: List[ModelJudgement]) -> None:
   try:
     # Convert list to dict with question_id as key (assuming qid is available elsewhere, we'll use index as fallback)
-    # Note: Ideally, ModelJudgement should have a qid; here we assume it's tied to predictions
-    judgements_dict = {j.extracted_final_answer: j.model_dump() for j in judgements}  # Temporary key; needs qid
+    judgements_dict = {j.question_id: j.model_dump() for j in judgements}
     with open(filepath, "w", encoding="utf-8") as f:
       json.dump(judgements_dict, f, indent=4)
   except Exception as e:
@@ -277,7 +278,10 @@ def generate_predictions(model, processors, questions, device, model_id, resume,
   return predictions
 
 
-def extract_judge_answer(question_text, correct_answer, response, model, processors, device, max_retries=3) -> Optional[ModelJudgement]:
+def extract_judge_answer(
+  question_id: str, question_text, correct_answer, response: Union[str, ModelPrediction], model, processors, device, max_retries=3
+) -> Optional[ModelJudgement]:
+
   # Handle response type
   if isinstance(response, str):
     content = response
@@ -293,10 +297,13 @@ def extract_judge_answer(question_text, correct_answer, response, model, process
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
   inputs = text_processor(prompt, return_tensors="pt").to(device)
   judgment = generate_and_parse_json(model, text_processor, inputs, prompt, JudgementResponse, max_new_tokens=4096, max_retries=max_retries)
+
   if judgment is None:  # Prompt identical to output
     return None
+
   if isinstance(judgment, JudgementResponse):
     return ModelJudgement(
+      question_id=question_id,
       extracted_final_answer=judgment.extracted_final_answer,
       reasoning=judgment.reasoning,
       correct_yes_no=judgment.correct_yes_no,
@@ -324,12 +331,13 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
     qid = question["id"]
     if qid not in predictions:
       continue
-    if any(j.extracted_final_answer == qid for j in judged_list):  # Assuming unique qid; adjust if needed
+    if any(j.question_id == qid for j in judged_list):  # Skip if already judged
       logger.info(f"Skipping question {idx+1}/{total} (id: {qid}) as already judged.")
       continue
 
     logger.info(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
+      question_id=qid,
       question_text=question["question"],
       correct_answer=question["answer"],
       response=predictions[qid],
@@ -338,6 +346,7 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
       device=device,
       max_retries=3,
     )
+
     if judge_result is not None:  # Filter out None results
       judged_list.append(judge_result)
 

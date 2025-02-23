@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import uuid
 from datetime import datetime
 from typing import Dict, List, Literal, Optional, Union
 
@@ -42,7 +41,7 @@ class PredictionResponse(BaseModel):
 class ModelPrediction(BaseModel):
   question_id: str
   model: str
-  content: Union[str, PredictionResponse]
+  content: PredictionResponse
 
 
 class JudgementResponse(BaseModel):
@@ -55,9 +54,12 @@ class JudgementResponse(BaseModel):
 class ModelJudgement(BaseModel):
   question_id: str
   extracted_final_answer: str
+  question_text: str
+  correct_answer: str
   reasoning: str
   correct_yes_no: Literal["yes", "no"]
   confidence: int
+  answer_type: str
 
 
 # --------------------------------------------------
@@ -117,6 +119,7 @@ def generate_and_parse_json(
 ) -> Optional[Union[BaseModel, str]]:
   divider = "=" * 80
   retry_count = 0
+
   while retry_count <= max_retries:
     with torch.no_grad():
       raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
@@ -241,9 +244,11 @@ def compose_prediction(model, processors, question, device, max_new_tokens=2048,
   logger.info(f"Input shape: {inputs['input_ids'].shape}")
 
   content = generate_and_parse_json(model, processor, inputs, prompt, PredictionResponse, max_new_tokens, max_retries)
+
   del inputs, images  # Free memory
   if torch.cuda.is_available():
     torch.cuda.empty_cache()
+
   return content
 
 
@@ -277,17 +282,19 @@ def generate_predictions(model, processors, questions, device, model_id, resume,
   return predictions
 
 
-def extract_judge_answer(
-  question_id: str, question_text, correct_answer, response: Union[str, ModelPrediction], model, processors, device, max_retries=3
-) -> Optional[ModelJudgement]:
+def extract_judge_answer(question, response: Union[str, ModelPrediction], model, processors, device, max_retries=3) -> Optional[ModelJudgement]:
+  question_id = question["id"]
+  question_text = question["question"]
+  correct_answer = question["answer"]
+  answer_type = question["answer_type"]
 
   # Handle response type
-  if isinstance(response, str):
-    content = response
-  elif isinstance(response, ModelPrediction):
+  if isinstance(response, ModelPrediction):
     content = response.content if isinstance(response.content, str) else response.content.model_dump_json()
   else:
-    logger.error(f"Invalid response type for judgment: {type(response)}")
+    logger.error(
+      f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
+    )
     return None
 
   judge_prompt = format_judge_prompt(question_text, correct_answer, content)
@@ -304,10 +311,14 @@ def extract_judge_answer(
     return ModelJudgement(
       question_id=question_id,
       extracted_final_answer=judgment.extracted_final_answer,
+      question_text=question_text,
+      correct_answer=correct_answer,
       reasoning=judgment.reasoning,
       correct_yes_no=judgment.correct_yes_no,
-      confidence=judgment.confidence
+      confidence=judgment.confidence,
+      answer_type=answer_type,
     )
+
   print("Trace: judgment is not JudgementResponse")
   return None
 
@@ -335,9 +346,7 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
 
     logger.info(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
-      question_id=qid,
-      question_text=question["question"],
-      correct_answer=question["answer"],
+      question=question,
       response=predictions[qid],
       model=model,
       processors=processors,
@@ -351,7 +360,7 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
     write_judgements_json(judged_filepath, judged_list)
 
   logger.info(f"All judgement results saved to '{judged_filepath}'.")
-  judged_dict = {j.extracted_final_answer: j.model_dump() for j in judged_list}  # Convert back to dict for compatibility
+  judged_dict = {j.question_id: j.model_dump() for j in judged_list}  # Convert back to dict for compatibility
   dump_metrics(judged_dict, total)
   return judged_dict
 

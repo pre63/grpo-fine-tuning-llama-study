@@ -318,3 +318,6 @@ pilot/wandb/*
 
 Report.bcf-SAVE-ERROR
 pilot/all
+
+.judged
+.predictions/

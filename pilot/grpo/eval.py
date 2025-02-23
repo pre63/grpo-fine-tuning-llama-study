@@ -325,7 +325,7 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
   return None
 
 
-def judge_predictions(dataset, predictions, model, processors, device, model_id, is_vision_model):
+def judge_predictions(dataset, predictions, model, processors, device, model_id):
   predictions = {p.question_id: p for p in predictions}
 
   judged_filepath = get_judged_filename(model_id)
@@ -362,21 +362,18 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
     write_judgements_json(judged_filepath, judged_list)
 
   logger.info(f"All judgement results saved to '{judged_filepath}'.")
-  judged_dict = {j.question_id: j.model_dump() for j in judged_list}  # Convert back to dict for compatibility
+  judged_dict = {j.question_id: j.model_dump() for j in judged_list}
   dump_metrics(judged_dict, total)
   return judged_dict
 
 
 def _fix_incomplete_json(raw: str) -> Optional[str]:
   """Fix incomplete or malformed JSON, escaping control characters and appending "}."""
-  cleaned: str = raw.strip()
-  if not cleaned:
-    return None
-
-  # Find the start of the JSON object
+  cleaned = raw.strip()
   start_idx = cleaned.find("{")
-  if start_idx == -1:
-    return '{"error": "no json object found"}'
+
+  if not cleaned or start_idx == -1:
+    return None
 
   # Take everything from the first { onward
   cleaned = cleaned[start_idx:]
@@ -402,14 +399,14 @@ def _fix_incomplete_json(raw: str) -> Optional[str]:
       pass
 
   # Trim trailing junk and append "}"
-  cleaned = cleaned.rstrip("\"}:, '`\t\n") + '"}'
+  cleaned = cleaned.rstrip("\"}:, '`\t\n") + '"\n}'
   return cleaned
 
 
 def evaluate(model, processors, test_data, device, model_id, resume, is_vision_model):
   predictions = generate_predictions(model, processors, test_data, device, model_id, resume, is_vision_model, max_retries=3)
 
-  judge_predictions(test_data, predictions, model, processors, device, model_id, is_vision_model)
+  judge_predictions(test_data, predictions, model, processors, device, model_id)
 
 
 if __name__ == "__main__":

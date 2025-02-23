@@ -49,7 +49,6 @@ class JudgementResponse(BaseModel):
   extracted_final_answer: str
   reasoning: str
   correct_yes_no: Literal["yes", "no"]
-  confidence: int
 
 
 class ModelJudgement(BaseModel):
@@ -291,15 +290,13 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
   answer_type = question["answer_type"]
 
   # Handle response type
-  if isinstance(response, ModelPrediction):
-    content = response.content if isinstance(response.content, str) else response.content.model_dump_json()
-  else:
+  if not isinstance(response, ModelPrediction):
     logger.error(
       f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
     )
     return None
 
-  judge_prompt = format_judge_prompt(question_text, correct_answer, content)
+  judge_prompt = format_judge_prompt(question_text, correct_answer, response.content)
   conversation = [{"role": "user", "content": [{"type": "text", "text": judge_prompt}]}]
   text_processor = processors["text"]
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
@@ -317,7 +314,7 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
       correct_answer=correct_answer,
       reasoning=judgment.reasoning,
       correct_yes_no=judgment.correct_yes_no,
-      confidence=judgment.confidence,
+      confidence=response.content.confidence,
       answer_type=answer_type,
     )
 

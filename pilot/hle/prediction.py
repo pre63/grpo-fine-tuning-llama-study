@@ -29,14 +29,6 @@ Your response must be a valid JSON object containing the following fields:
   "answer": "{your succinct, exact, final answer}",
   "confidence": "{your confidence score as an integer between 0 and 100}"
 }
-
-Example:
-{
-  "explanation": "The problem involves calculating 2 + 2, which is a simple arithmetic operation.",
-  "answer": "4",
-  "confidence": "100"
-}
-
 Ensure the output is only the properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
 """
 
@@ -48,14 +40,6 @@ Your response must be a valid JSON object containing the following fields:
   "answer": "{your chosen answer}",
   "confidence": "{your confidence score as an integer between 0 and 100}"
 }
-
-Example:
-{
-  "explanation": "The question asks for the capital of France, and among the options, Paris is the correct city.",
-  "answer": "Paris",
-  "confidence": "95"
-}
-
 Ensure the output is only the properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
 """
 

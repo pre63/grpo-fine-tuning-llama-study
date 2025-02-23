@@ -12,23 +12,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def build_conversation(example: Dict, has_images: bool, include_system_prompt: bool = False) -> List[Dict]:
+def build_conversation(example: Dict, has_images: bool, include_system_prompt: bool = False, eval: bool = False) -> List[Dict]:
+  conversation = []
+
+  if include_system_prompt:
+    conversation.append({"role": "system", "content": get_system_prompt(example)})
+
   user_text = example["question"]
+
   if has_images:
     user_text = "<|image|>\n" + user_text
-  user_content = [{"type": "text", "text": user_text}]
 
-  conversation = []
-  if include_system_prompt:
-    system_prompt = get_system_prompt(example)
-    conversation.append({"role": "system", "content": system_prompt})
+  conversation.append({"role": "user", "content": [{"type": "text", "text": user_text}]})
 
-  conversation.extend(
-    [
-      {"role": "user", "content": user_content},
-      {"role": "assistant", "content": [{"type": "text", "text": example["answer"]}]},
-    ]
-  )
+  if not eval:
+    conversation.append({"role": "assistant", "content": [{"type": "text", "text": example["answer"]}]})
 
   return conversation
 

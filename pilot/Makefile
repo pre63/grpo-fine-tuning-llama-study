@@ -17,17 +17,15 @@ export WANDB_API_KEY=4b28b7410bc92bce660b446e56bd56f33dca3e44
 export HF_TOKEN=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
 export TOKENIZERS_PARALLELISM=false
 
-
-
 test:
 	@python -m grpo.eval
-	@python -m grpo.trainer
 	@python -m grpo.conversation
 	@python -m grpo.model
 	@python -m grpo.reward
 	@python -m grpo.hardware
 	@python -m grpo.config
 	@python -m grpo.image_utils
+	@python -m grpo.trainer
 
 env:
 	@python3 -m venv ../.venv

@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, List, Literal, Optional, Union, Any, Type
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 import torch
 from datasets import load_dataset
@@ -115,13 +115,7 @@ def decode(processor, input_ids, raw_output):
 
 
 def generate_and_parse_json(
-    model: Any,
-    processor: Any,
-    inputs: Dict[str, torch.Tensor],
-    prompt: str,
-    expected_model: Type[BaseModel],
-    max_new_tokens: int = 8192,
-    max_retries: int = 3
+  model: Any, processor: Any, inputs: Dict[str, torch.Tensor], prompt: str, expected_model: Type[BaseModel], max_new_tokens: int = 8192, max_retries: int = 3
 ) -> Optional[BaseModel]:
   divider: str = "=" * 80
   logger: logging.Logger = logging.getLogger(__name__)
@@ -171,12 +165,12 @@ def _fix_incomplete_json(raw: str) -> str:
     pass  # Proceed to fix if parsing fails
 
   # Count braces and quotes
-  open_braces: int = cleaned.count('{')
-  close_braces: int = cleaned.count('}')
+  open_braces: int = cleaned.count("{")
+  close_braces: int = cleaned.count("}")
   quote_count: int = cleaned.count('"')
 
   # If it looks balanced and ends correctly, assume it’s fine
-  if open_braces == close_braces and quote_count % 2 == 0 and cleaned.endswith('}'):
+  if open_braces == close_braces and quote_count % 2 == 0 and cleaned.endswith("}"):
     return cleaned
 
   # Handle specific case: trailing malformed number (e.g., "95})
@@ -192,12 +186,12 @@ def _fix_incomplete_json(raw: str) -> str:
 
   # Balance braces
   while open_braces > close_braces:
-    cleaned += '}'
+    cleaned += "}"
     close_braces += 1
 
   # Ensure it ends with a closing brace
-  if not cleaned.endswith('}'):
-    cleaned += '}'
+  if not cleaned.endswith("}"):
+    cleaned += "}"
 
   return cleaned
 
@@ -273,7 +267,7 @@ def write_judgements_json(filepath: str, judgements: List[ModelJudgement]) -> No
 def compose_prediction(model, processors, question, device, max_new_tokens=2048, is_vision_model=False, max_retries=3):
   torch.cuda.empty_cache()
   has_images = is_vision_model and question.get("image", "").strip()
-  conversation = build_conversation(question, has_images, include_system_prompt=True)
+  conversation = build_conversation(question, has_images, include_system_prompt=True, eval=True)
 
   text_processor = processors["text"]
   vision_processor = processors["vision"] if is_vision_model else None
@@ -282,7 +276,7 @@ def compose_prediction(model, processors, question, device, max_new_tokens=2048,
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
   images = [decode_base64_image(question["image"])] if has_images else []
   inputs = (
-      vision_processor(text=prompt, images=images, return_tensors="pt").to(device) if is_vision_model else text_processor(prompt, return_tensors="pt").to(device)
+    vision_processor(text=prompt, images=images, return_tensors="pt").to(device) if is_vision_model else text_processor(prompt, return_tensors="pt").to(device)
   )
   logger.info(f"Input shape: {inputs['input_ids'].shape}")
 
@@ -341,7 +335,7 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
     content = response.content if isinstance(response.content, str) else response.content.model_dump_json()
   else:
     logger.error(
-        f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
+      f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
     )
     return None
 
@@ -357,14 +351,14 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
 
   if isinstance(judgment, JudgementResponse):
     return ModelJudgement(
-        question_id=question_id,
-        extracted_final_answer=judgment.extracted_final_answer,
-        question_text=question_text,
-        correct_answer=correct_answer,
-        reasoning=judgment.reasoning,
-        correct_yes_no=judgment.correct_yes_no,
-        confidence=judgment.confidence,
-        answer_type=answer_type,
+      question_id=question_id,
+      extracted_final_answer=judgment.extracted_final_answer,
+      question_text=question_text,
+      correct_answer=correct_answer,
+      reasoning=judgment.reasoning,
+      correct_yes_no=judgment.correct_yes_no,
+      confidence=judgment.confidence,
+      answer_type=answer_type,
     )
 
   print("Trace: judgment is not JudgementResponse")
@@ -394,12 +388,12 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
 
     logger.info(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
-        question=question,
-        response=predictions[qid],
-        model=model,
-        processors=processors,
-        device=device,
-        max_retries=3,
+      question=question,
+      response=predictions[qid],
+      model=model,
+      processors=processors,
+      device=device,
+      max_retries=3,
     )
 
     if judge_result is not None:  # Filter out None results

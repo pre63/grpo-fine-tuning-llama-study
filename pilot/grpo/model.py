@@ -1,4 +1,3 @@
-import logging
 import os
 import warnings
 from typing import Dict, Tuple, Union
@@ -18,12 +17,8 @@ torch.cuda.empty_cache() if torch.cuda.is_available() else None
 warnings.filterwarnings("ignore", category=UserWarning, module="(transformers|peft|trl).*")
 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 def get_model(model_id: str, device_map, is_vision_model: bool) -> Union[LlamaForCausalLM, MllamaForConditionalGeneration]:
-  logger.info("Entering get_model")
+  print("Entering get_model")
   model_class = MllamaForConditionalGeneration if is_vision_model else AutoModelForCausalLM
 
   model = model_class.from_pretrained(
@@ -35,13 +30,13 @@ def get_model(model_id: str, device_map, is_vision_model: bool) -> Union[LlamaFo
 
   model = apply_lora(model, device_map)  # Apply LoRA if needed
 
-  logger.info(f"Exiting get_model with model type: {type(model)}")
+  print(f"Exiting get_model with model type: {type(model)}")
 
   return model
 
 
 def get_processors(model_id: str, is_vision_model: bool) -> Dict[str, Union[AutoTokenizer, MllamaProcessor]]:
-  logger.info("Entering get_processors")
+  print("Entering get_processors")
 
   vision = None
   if is_vision_model:
@@ -49,18 +44,18 @@ def get_processors(model_id: str, is_vision_model: bool) -> Dict[str, Union[Auto
   text = ensure_padding_token(AutoTokenizer.from_pretrained(model_id), model_id)
   processors = {"text": text, "vision": vision}
 
-  logger.info(f"Exiting get_processors with processors type: {type(processors)}")
+  print(f"Exiting get_processors with processors type: {type(processors)}")
   return processors
 
 
 def ensure_padding_token(processor, model_id: str) -> None:
   """Ensure the processor has a valid padding token and left padding."""
-  logger.info(f"Ensuring padding token for {model_id}")
+  print(f"Ensuring padding token for {model_id}")
   if hasattr(processor, "tokenizer"):  # MllamaProcessor case
     tokenizer = processor.tokenizer
     if tokenizer.pad_token is None:
       tokenizer.pad_token = tokenizer.eos_token or "<pad>"
-      logger.info(f"Set tokenizer.pad_token to {tokenizer.pad_token}")
+      print(f"Set tokenizer.pad_token to {tokenizer.pad_token}")
     tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
     tokenizer.padding_side = "left"  # Required by GRPOTrainer
     processor.pad_token = tokenizer.pad_token  # Sync top-level
@@ -69,22 +64,22 @@ def ensure_padding_token(processor, model_id: str) -> None:
   else:  # AutoTokenizer case
     if processor.pad_token is None:
       processor.pad_token = processor.eos_token or "<pad>"
-      logger.info(f"Set processor.pad_token to {processor.pad_token}")
+      print(f"Set processor.pad_token to {processor.pad_token}")
     processor.pad_token_id = processor.convert_tokens_to_ids(processor.pad_token)
     processor.padding_side = "left"  # Required by GRPOTrainer
     padding_side = processor.padding_side  # Direct attribute
 
   processor.model_name = model_id
-  logger.info(f"Padding token: {processor.pad_token}, ID: {processor.pad_token_id}, Side: {padding_side}")
+  print(f"Padding token: {processor.pad_token}, ID: {processor.pad_token_id}, Side: {padding_side}")
   return processor
 
 
 def apply_lora(model, device_map) -> object:
-  logger.info("Entering apply_lora")
+  print("Entering apply_lora")
   lora_config = get_lora_config(device_map)
   model_with_lora = get_peft_model(model, lora_config)
 
-  logger.info("Exiting apply_lora")
+  print("Exiting apply_lora")
   return model_with_lora
 
 
@@ -100,7 +95,7 @@ if __name__ == "__main__":
 
   class TestModelIntegration(unittest.TestCase):
     def test_model_loading_and_lora(self):
-      logger.info("Starting model integration test")
+      print("Starting model integration test")
       model_id, _, _, device_map, is_vision_model = get_parameters()
 
       model = get_model(model_id, device_map, is_vision_model)
@@ -119,13 +114,13 @@ if __name__ == "__main__":
         text_processor = processors["text"]
         inputs = text_processor("Hello", return_tensors="pt")
       self.assertIn("input_ids", inputs)
-      logger.info("Model integration test completed")
+      print("Model integration test completed")
 
   # Run tests and exit cleanly
-  logger.info("Running test suite")
+  print("Running test suite")
   runner = unittest.TextTestRunner()
   suite = unittest.TestLoader().loadTestsFromTestCase(TestModelIntegration)
   result = runner.run(suite)
   torch.cuda.empty_cache()  # Clear any torch state
-  logger.info("Test suite completed")
+  print("Test suite completed")
   sys.exit(0 if result.wasSuccessful() else 1)

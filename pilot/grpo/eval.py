@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import re
 from datetime import datetime
@@ -19,9 +18,6 @@ from hle.judge import dump_metrics, format_judge_prompt
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # --------------------------------------------------
 # Pydantic Models
@@ -68,9 +64,9 @@ class ModelJudgement(BaseModel):
 
 
 def load_hle_dataset():
-  logger.info("Loading HLE test dataset...")
+  print("Loading HLE test dataset...")
   dataset = load_dataset("cais/hle", split="test")
-  logger.info(f"Loaded {len(dataset)} questions from HLE test dataset.")
+  print(f"Loaded {len(dataset)} questions from HLE test dataset.")
   return dataset
 
 
@@ -118,7 +114,6 @@ def generate_and_parse_json(
   model: Any, processor: Any, inputs: Dict[str, torch.Tensor], prompt: str, expected_model: Type[BaseModel], max_new_tokens: int = 8192, max_retries: int = 3
 ) -> Optional[BaseModel]:
   divider: str = "=" * 80
-  logger: logging.Logger = logging.getLogger(__name__)
 
   for attempt in range(max_retries + 1):
     with torch.no_grad():
@@ -130,16 +125,16 @@ def generate_and_parse_json(
         torch.cuda.empty_cache()
 
     if decoded.strip() == prompt.strip():
-      logger.info("Output identical to prompt; returning None.")
+      print("Output identical to prompt; returning None.")
       return None
 
     # Attempt to fix incomplete JSON
     fixed_decoded: str = _fix_incomplete_json(decoded)
 
-    logger.info(f"\n{divider}\n{prompt}\n---\n{fixed_decoded}\n{divider}\n")
+    print(f"\n{divider}\n{prompt}\n---\n{fixed_decoded}\n{divider}\n")
 
     if fixed_decoded is None:
-      logger.error(f"Failed to fix JSON for attempt {attempt + 1}. Returning None. {decoded}")
+      print(f"Failed to fix JSON for attempt {attempt + 1}. Returning None. {decoded}")
       return None
 
     try:
@@ -148,9 +143,9 @@ def generate_and_parse_json(
       return result
     except (json.JSONDecodeError, Exception) as e:
       if attempt < max_retries:
-        logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
+        print(f"Attempt {attempt + 1} failed: {e}. Retrying...")
       else:
-        logger.error(f"Max retries ({max_retries}) reached. Failed with: {e}. Returning None. {decoded}")
+        print(f"Max retries ({max_retries}) reached. Failed with: {e}. Returning None. {decoded}")
 
       return None
 
@@ -171,10 +166,10 @@ def read_predictions_json(filepath: str) -> Optional[List[ModelPrediction]]:
         prediction = ModelPrediction.model_validate(value)
         predictions.append(prediction)
       except Exception as e:
-        logger.error(f"Prediction validation error in {filepath}: {e}")
+        print(f"Prediction validation error in {filepath}: {e}")
     return predictions if predictions else None
   except Exception as e:
-    logger.error(f"Failed to read predictions JSON file {filepath}: {e}")
+    print(f"Failed to read predictions JSON file {filepath}: {e}")
     return None
 
 
@@ -185,7 +180,7 @@ def write_predictions_json(filepath: str, predictions: List[ModelPrediction]) ->
     with open(filepath, "w", encoding="utf-8") as f:
       json.dump(predictions_dict, f, indent=4)
   except Exception as e:
-    logger.error(f"Failed to write predictions JSON file {filepath}: {e}")
+    print(f"Failed to write predictions JSON file {filepath}: {e}")
 
 
 def read_judgements_json(filepath: str) -> Optional[List[ModelJudgement]]:
@@ -201,10 +196,10 @@ def read_judgements_json(filepath: str) -> Optional[List[ModelJudgement]]:
         judgement = ModelJudgement.model_validate(value)
         judgements.append(judgement)
       except Exception as e:
-        logger.error(f"Judgement validation error in {filepath}: {e}")
+        print(f"Judgement validation error in {filepath}: {e}")
     return judgements if judgements else None
   except Exception as e:
-    logger.error(f"Failed to read judgements JSON file {filepath}: {e}")
+    print(f"Failed to read judgements JSON file {filepath}: {e}")
     return None
 
 
@@ -215,7 +210,7 @@ def write_judgements_json(filepath: str, judgements: List[ModelJudgement]) -> No
     with open(filepath, "w", encoding="utf-8") as f:
       json.dump(judgements_dict, f, indent=4)
   except Exception as e:
-    logger.error(f"Failed to write judgements JSON file {filepath}: {e}")
+    print(f"Failed to write judgements JSON file {filepath}: {e}")
 
 
 # --------------------------------------------------
@@ -237,7 +232,7 @@ def compose_prediction(model, processors, question, device, max_new_tokens=2048,
   inputs = (
     vision_processor(text=prompt, images=images, return_tensors="pt").to(device) if is_vision_model else text_processor(prompt, return_tensors="pt").to(device)
   )
-  logger.info(f"Input shape: {inputs['input_ids'].shape}")
+  print(f"Input shape: {inputs['input_ids'].shape}")
 
   content = generate_and_parse_json(model, processor, inputs, prompt, PredictionResponse, max_new_tokens, max_retries)
 
@@ -254,24 +249,24 @@ def generate_predictions(model, processors, questions, device, model_id, resume,
   predictions = existing_predictions if existing_predictions else []
 
   if resume and predictions:
-    logger.info(f"Resuming from existing predictions file '{output_filepath}'.")
+    print(f"Resuming from existing predictions file '{output_filepath}'.")
   elif os.path.exists(output_filepath):
-    logger.info(f"Found existing predictions file '{output_filepath}', but not resuming. Overwriting predictions.")
+    print(f"Found existing predictions file '{output_filepath}', but not resuming. Overwriting predictions.")
   else:
-    logger.info("No existing predictions file found. Starting fresh predictions.")
+    print("No existing predictions file found. Starting fresh predictions.")
 
   total = len(questions)
   for idx, question in enumerate(questions):
     qid = question["id"]
     if resume and any(p.question_id == qid for p in predictions):
-      logger.info(f"Skipping question {idx+1}/{total} (id: {qid}) as prediction exists.")
+      print(f"Skipping question {idx+1}/{total} (id: {qid}) as prediction exists.")
       continue
 
-    logger.info(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
+    print(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
     content = compose_prediction(model, processors, question, device, is_vision_model=is_vision_model, max_retries=max_retries)
 
     if not isinstance(content, PredictionResponse):
-      logger.error(f"Invalid prediction type for question {qid}, skipping.")
+      print(f"Invalid prediction type for question {qid}, skipping.")
       continue
 
     mp = ModelPrediction(question_id=qid, model=model_id, content=content)
@@ -279,7 +274,7 @@ def generate_predictions(model, processors, questions, device, model_id, resume,
 
     write_predictions_json(output_filepath, predictions)
 
-  logger.info(f"All predictions saved to '{output_filepath}'.")
+  print(f"All predictions saved to '{output_filepath}'.")
   return predictions
 
 
@@ -291,7 +286,7 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
 
   # Handle response type
   if not isinstance(response, ModelPrediction):
-    logger.error(
+    print(
       f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
     )
     return None
@@ -330,9 +325,9 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id)
   judged_list = existing_judgements if existing_judgements else []
 
   if judged_list:
-    logger.info(f"Found existing judged file '{judged_filepath}'. Resuming judgement.")
+    print(f"Found existing judged file '{judged_filepath}'. Resuming judgement.")
   else:
-    logger.info("No judged file found. Starting fresh judgement.")
+    print("No judged file found. Starting fresh judgement.")
 
   total = len(dataset)
   for idx, question in enumerate(dataset):
@@ -340,10 +335,10 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id)
     if qid not in predictions:
       continue
     if any(j.question_id == qid for j in judged_list):  # Skip if already judged
-      logger.info(f"Skipping question {idx+1}/{total} (id: {qid}) as already judged.")
+      print(f"Skipping question {idx+1}/{total} (id: {qid}) as already judged.")
       continue
 
-    logger.info(f"Judging question {idx+1}/{total} (id: {qid})...")
+    print(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
       question=question,
       response=predictions[qid],
@@ -358,7 +353,7 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id)
 
     write_judgements_json(judged_filepath, judged_list)
 
-  logger.info(f"All judgement results saved to '{judged_filepath}'.")
+  print(f"All judgement results saved to '{judged_filepath}'.")
   judged_dict = {j.question_id: j.model_dump() for j in judged_list}
   dump_metrics(judged_dict, total)
   return judged_dict
@@ -518,7 +513,7 @@ if __name__ == "__main__":
       self._test_json_parsing(raw)
 
     def test_evaluation(self):
-      logger.info("Starting evaluation test suite")
+      print("Starting evaluation test suite")
 
       # Setup
       model_id, cpu, resume, device_map, is_vision_model = get_parameters()
@@ -529,10 +524,10 @@ if __name__ == "__main__":
       test_data = load_hle_dataset().take(2)
 
       # Run evaluation
-      logger.info("Running evaluation")
+      print("Running evaluation")
       evaluate(model, processors, test_data, device, model_id, resume, is_vision_model)
 
-      logger.info("All tests passed successfully!")
+      print("All tests passed successfully!")
 
       if torch.cuda.is_available():
         torch.cuda.empty_cache()

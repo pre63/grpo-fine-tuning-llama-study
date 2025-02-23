@@ -1,4 +1,3 @@
-import logging
 from typing import Dict, List, Optional
 
 from PIL import Image as PIL_Image
@@ -6,9 +5,6 @@ from PIL import Image as PIL_Image
 from grpo.image_utils import decode_base64_image
 from grpo.model import ensure_padding_token
 from hle.prediction import get_system_prompt
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 def build_conversation(example: Dict, has_images: bool, include_system_prompt: bool = False, eval: bool = False) -> List[Dict]:

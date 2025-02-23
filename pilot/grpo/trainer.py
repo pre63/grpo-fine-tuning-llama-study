@@ -1,5 +1,4 @@
 import base64
-import logging
 import os
 import sys
 from typing import Dict, Tuple, Union
@@ -18,18 +17,12 @@ from grpo.model import get_model, get_processors
 from grpo.reward import compute_reward
 from hle.dataset import load_and_split_dataset
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 
 def get_trainer(model_id: str, processors, train_data, test_data, device_map: str):
-  logger.info("Setting up GRPOTrainer")
+  print("Setting up GRPOTrainer")
 
   # Get config with device
   config = get_config(model_id, device_map)
@@ -55,10 +48,10 @@ if __name__ == "__main__":
 
   class TestGRPOIntegration(unittest.TestCase):
     def test_get_trainer_and_training_integration(self):
-      logger.info("Starting GRPO training integration test with get_trainer")
+      print("Starting GRPO training integration test with get_trainer")
 
       model_id, cpu, resume, device_map, is_vision_model = get_parameters()
-      logger.info(f"Using MODEL: {model_id}, CPU: {cpu}, RESUME: {resume}, DEVICE_MAP: {device_map}")
+      print(f"Using MODEL: {model_id}, CPU: {cpu}, RESUME: {resume}, DEVICE_MAP: {device_map}")
 
       processors = get_processors(model_id, is_vision_model)
       model = get_model(model_id, device_map, is_vision_model)
@@ -86,15 +79,15 @@ if __name__ == "__main__":
 
       trainer.train()
 
-      logger.info("Training completed")
+      print("Training completed")
 
       torch.cuda.empty_cache() if torch.cuda.is_available() else None
-      logger.info("GRPO training integration test with get_trainer completed")
+      print("GRPO training integration test with get_trainer completed")
 
-  logger.info("Running GRPO integration test suite")
+  print("Running GRPO integration test suite")
   runner = unittest.TextTestRunner()
   suite = unittest.TestLoader().loadTestsFromTestCase(TestGRPOIntegration)
   result = runner.run(suite)
   torch.cuda.empty_cache()
-  logger.info("Test suite completed")
+  print("Test suite completed")
   sys.exit(0 if result.wasSuccessful() else 1)

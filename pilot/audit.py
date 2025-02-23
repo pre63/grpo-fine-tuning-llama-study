@@ -7,7 +7,6 @@ from grpo.hardware import get_parameters
 from grpo.model import get_model, get_processors
 
 if __name__ == "__main__":
-  # Configure logging
   model_id, cpu, resume, device_map, is_vision_model = get_parameters()
 
   # Setup model and processors
@@ -43,7 +42,7 @@ if __name__ == "__main__":
   if audit_results is not None:
     print(f"Audit completed successfully. Results saved for {len(audit_results)} questions")
   else:
-    logger.error("Audit failed")
+    print("Audit failed")
 
   # Clean up
   if torch.cuda.is_available():

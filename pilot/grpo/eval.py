@@ -417,78 +417,111 @@ if __name__ == "__main__":
 
   class TestEvaluation(unittest.TestCase):
 
-    def test_json_fixer(self):
-      test_cases = [
-        # Case 1: Extra closing brace
-        """{
-            "explanation": "The average adult height of the population is 3 feet and 6 inches.",
-            "answer": "3.06",
-            "confidence": "100"
-          }""",
-        """
-          ```
-          {
-            "explanation": "The average adult height of the population is 3 feet and 6 inches.",
-            "answer": "3.06",
-            "confidence": "100"
-          }
-          ```""",
-        # Case 2: Extra text after valid JSON
-        """
-          Here is the response to your query in valid json:
-          ```
-          {
-            "explanation": "The average adult height of the population is 3 feet and 6 inches.",
-            "answer": "3.06",
-            "confidence": "100"
-          }
-          ```
-          Enjoy the solution.""",
-        # Case 3: Truncated string value
-        """{
-            "explanation": "The third homotopy group is T^3.",
-            "answer": "3",
-            "confidence": "100
-          }""",
-        # Case 4: Completely valid JSON
-        """{
-            "explanation": "All good here.",
-            "answer": "yes",
-            "confidence": "95"
-          }""",
-        # Case 5: Missing closing brace
-        """{
-            "explanation": "Incomplete JSON",
-            "answer": "no""",
-        # Case 6: Empty string
-        "",
-        # Case 7: Trailing comma after last value
-        """{
-            "explanation": "Extra comma issue",
-            "answer": "yes",
-            "confidence": "90",
-          }""",
-        # Case 8: Malformed number with extra brace
-        """{
-            "explanation": "Height example",
-            "answer": "3.06",
-            "confidence": "100}
-          }""",
-        """{"explanation": "The first nontrivial group of symmetries of the unit square is the dihedral group $D_4$, which consists of 8 elements: $4$ rotations and 4 reflections. The moduli space $X$ of nondegenerate lattices in $\\mathbb{R}^2$ with unit area is the quotient space $D_4/X$, where $X$ is the quotient space of the identity in $D_4$ by the conjugacy relation. This quotient space can be identified with the projective plane $P^1$, whose points are the equivalence classes of lines through the origin. The group $D_4$ acts on $P^1$ by translations and rotations, and this action is transitive. Therefore, the moduli space $X$ is homeomorphic to the real line $\\mathbb{R}$, and its fundamental group is isomorphic to $\\mathbb{Z}$. The first nontrivial element of the fundamental group is the element of order 2, which corresponds to the rotation by $90^\\circ$ about the origin. Therefore, the first nontrivial homology group $H_1(X, \\mathbb{Z})$ is the trivial group, which is $\\boxed{0}$.""",
-      ]
-
-      for idx, test in enumerate(test_cases, 1):
-        fixed = _fix_incomplete_json(test)
-        if fixed is None and test.strip() == "":
-          continue
-
+    def _test_json_parsing(self, raw: str, expect_none: bool = False):
+      """Helper method to test JSON fixing and parsing."""
+      fixed = _fix_incomplete_json(raw)
+      if expect_none:
+        self.assertIsNone(fixed)
+      else:
         try:
           parsed = json.loads(fixed)
           self.assertIsInstance(parsed, dict)
         except json.JSONDecodeError as e:
-          self.fail(f"Failed to parse fixed JSON: {idx} - {e} - {fixed}")
+          self.fail(f"Failed to parse: {e} - {fixed}")
 
-      logger.info("All json aprsing tests passed successfully!")
+    def test_extra_closing_brace(self):
+      raw = """
+          {
+              "explanation": "The average adult height of the population is 3 feet and 6 inches.",
+              "answer": "3.06",
+              "confidence": "100"
+          }}
+          """
+      self._test_json_parsing(raw)
+
+    def test_extra_closing_brace_with_code_block(self):
+      raw = """
+          ```
+          {
+              "explanation": "The average adult height of the population is 3 feet and 6 inches.",
+              "answer": "3.06",
+              "confidence": "100"
+          }
+          ```
+          """
+      self._test_json_parsing(raw)
+
+    def test_extra_text_after_valid_json(self):
+      raw = """
+          Here is the response to your query in valid json:
+          ```
+          {
+              "explanation": "The average adult height of the population is 3 feet and 6 inches.",
+              "answer": "3.06",
+              "confidence": "100"
+          }
+          ```
+          Enjoy the solution.
+          """
+      self._test_json_parsing(raw)
+
+    def test_truncated_string_value(self):
+      raw = """
+          {
+              "explanation": "The third homotopy group is T^3.",
+              "answer": "3",
+              "confidence": "100
+          }
+          """
+      self._test_json_parsing(raw)
+
+    def test_completely_valid_json(self):
+      raw = """
+          {
+              "explanation": "All good here.",
+              "answer": "yes",
+              "confidence": "95"
+          }
+          """
+      self._test_json_parsing(raw)
+
+    def test_missing_closing_brace(self):
+      raw = """
+          {
+              "explanation": "Incomplete JSON",
+              "answer": "no"
+          """
+      self._test_json_parsing(raw)
+
+    def test_empty_string(self):
+      raw = ""
+      self._test_json_parsing(raw, expect_none=True)
+
+    def test_trailing_comma(self):
+      raw = """
+          {
+              "explanation": "Extra comma issue",
+              "answer": "yes",
+              "confidence": "90",
+          }
+          """
+      self._test_json_parsing(raw)
+
+    def test_malformed_number_with_extra_brace(self):
+      raw = """
+          {
+              "explanation": "Height example",
+              "answer": "3.06",
+              "confidence": "100}
+          }
+          """
+      self._test_json_parsing(raw)
+
+    def test_complex_latex_content(self):
+      raw = """
+          {"explanation": "The first nontrivial group of symmetries of the unit square is the dihedral group $D_4$, which consists of 8 elements: $4$ rotations and 4 reflections. The moduli space $X$ of nondegenerate lattices in $\\mathbb{R}^2$ with unit area is the quotient space $D_4/X$, where $X$ is the quotient space of the identity in $D_4$ by the conjugacy relation. This quotient space can be identified with the projective plane $P^1$, whose points are the equivalence classes of lines through the origin. The group $D_4$ acts on $P^1$ by translations and rotations, and this action is transitive. Therefore, the moduli space $X$ is homeomorphic to the real line $\\mathbb{R}$, and its fundamental group is isomorphic to $\\mathbb{Z}$. The first nontrivial element of the fundamental group is the element of order 2, which corresponds to the rotation by $90^\\circ$ about the origin. Therefore, the first nontrivial homology group $H_1(X, \\mathbb{Z})$ is the trivial group, which is $\\boxed{0}$."}
+          """
+      self._test_json_parsing(raw)
 
     def test_evaluation(self):
       logger.info("Starting evaluation test suite")

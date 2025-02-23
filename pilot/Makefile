@@ -20,9 +20,10 @@ export TOKENIZERS_PARALLELISM=false
 
 
 test:
-	@if [ "$(CPU)" = "False" ]; then \
-		python -m grpo.eval; \
-	fi
+	@python -m grpo.eval
+	# @if [ "$(CPU)" = "False" ]; then \
+	# 	python -m grpo.eval; \
+	# fi
 
 	@python -m grpo.trainer
 	@python -m grpo.conversation

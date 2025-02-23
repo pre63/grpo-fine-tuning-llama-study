@@ -24,7 +24,6 @@ SOFTWARE.
 
 SYSTEM_EXACT_ANSWER = """
 Your response must be a valid JSON object containing the following fields:
-
 {
   "explanation": "{your explanation for your final answer}",
   "answer": "{your succinct, exact, final answer}",
@@ -38,13 +37,12 @@ Example:
   "confidence": "100"
 }
 
-Ensure the output is properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
+Ensure the output is ONLY properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
 """
 
 
 SYSTEM_MC = """
 Your response must be a valid JSON object containing the following fields:
-
 {
   "explanation": "{your explanation for your answer choice}",
   "answer": "{your chosen answer}",
@@ -58,7 +56,7 @@ Example:
   "confidence": "95"
 }
 
-Ensure the output is properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
+Ensure the output is ONLY properly formatted JSON with double-quoted keys and values, and Confidence as an integer (no % symbol).
 """
 
 

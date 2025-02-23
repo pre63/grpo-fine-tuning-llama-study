@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union, Any, Type
 
 import torch
 from datasets import load_dataset
@@ -115,48 +115,80 @@ def decode(processor, input_ids, raw_output):
 
 
 def generate_and_parse_json(
-  model, processor, inputs, prompt, expected_model: type[BaseModel], max_new_tokens=8192, max_retries=3
-) -> Optional[Union[BaseModel, str]]:
-  divider = "=" * 80
-  retry_count = 0
+    model: Any,
+    processor: Any,
+    inputs: Dict[str, torch.Tensor],
+    prompt: str,
+    expected_model: Type[BaseModel],
+    max_new_tokens: int = 8192,
+    max_retries: int = 3
+) -> Optional[BaseModel]:
+  divider: str = "=" * 80
+  logger: logging.Logger = logging.getLogger(__name__)
 
-  while retry_count <= max_retries:
+  for attempt in range(max_retries + 1):
     with torch.no_grad():
-      raw_outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-      decoded = decode(processor, inputs["input_ids"], raw_outputs)
-      del raw_outputs  # Free memory immediately
+      raw_outputs: torch.Tensor = model.generate(**inputs, max_new_tokens=max_new_tokens)
+      decoded: str = decode(processor, inputs["input_ids"], raw_outputs).strip()
+      del raw_outputs
+
       if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-      # Fix incomplete JSON by adding closing bracket if missing
-      if not decoded.strip().endswith("}"):
-        decoded = decoded.strip() + "\n}"
-
-      logger.info(f"\n{divider}\n{prompt}\n---\n{decoded}\n{divider}\n")
 
     if decoded.strip() == prompt.strip():
       logger.info("Output identical to prompt; returning None.")
       return None
 
+    # Attempt to fix incomplete JSON
+    fixed_decoded: str = _fix_incomplete_json(decoded)
+
+    logger.info(f"\n{divider}\n{prompt}\n---\n{fixed_decoded}\n{divider}\n")
+
     try:
-      json_data = json.loads(decoded)
-      result = expected_model.model_validate(json_data)
-      logger.info(f"Successfully parsed and validated {expected_model.__name__} on attempt {retry_count + 1}")
+      json_data: Dict[str, Any] = json.loads(fixed_decoded)
+      result: BaseModel = expected_model.model_validate(json_data)
       return result
-    except json.JSONDecodeError as e:
-      retry_count += 1
-      if retry_count <= max_retries:
-        logger.warning(f"Failed to parse JSON on attempt {retry_count}: {e}. Retrying...")
+    except (json.JSONDecodeError, Exception) as e:
+      if attempt < max_retries:
+        logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
       else:
-        logger.error(f"Max retries ({max_retries}) reached. Could not parse JSON: {e}. Returning raw output.")
-        return decoded
-    except Exception as e:  # Pydantic validation errors
-      retry_count += 1
-      if retry_count <= max_retries:
-        logger.warning(f"Failed to validate {expected_model.__name__} on attempt {retry_count}: {e}. Retrying...")
-      else:
-        logger.error(f"Max retries ({max_retries}) reached. Validation failed: {e}. Returning raw output.")
-        return decoded
+        logger.error(f"Max retries ({max_retries}) reached. Failed with: {e}. Returning None. {decoded}")
+
+      return None
+
+
+def _fix_incomplete_json(raw: str) -> str:
+  """Attempt to fix incomplete JSON by balancing braces and quotes."""
+  cleaned: str = raw.strip()
+  if not cleaned:
+    return '{"error": "empty output"}'
+
+  # Count braces and quotes to detect truncation
+  open_braces: int = cleaned.count('{')
+  close_braces: int = cleaned.count('}')
+  open_quotes: int = cleaned.count('"') % 2  # Odd number means unclosed string
+
+  # If already valid-looking, return as-is
+  if open_braces == close_braces and open_quotes == 0 and (cleaned.endswith('}') or cleaned.endswith('"}')):
+    return cleaned
+
+  # Remove partial trailing content (e.g., half a key-value pair)
+  cleaned = cleaned.rstrip('"}:, \t\n')  # Strip common JSON delimiters and whitespace
+
+  # Balance braces
+  while open_braces > close_braces:
+    cleaned += '}'
+    close_braces += 1
+
+  # Close an unterminated string
+  if open_quotes:
+    cleaned += '"'
+
+  # Ensure it ends with a closing brace if it’s a JSON object
+  if not cleaned.endswith('}'):
+    cleaned += '}'
+
+  return cleaned
 
 
 # --------------------------------------------------
@@ -239,7 +271,7 @@ def compose_prediction(model, processors, question, device, max_new_tokens=2048,
   prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
   images = [decode_base64_image(question["image"])] if has_images else []
   inputs = (
-    vision_processor(text=prompt, images=images, return_tensors="pt").to(device) if is_vision_model else text_processor(prompt, return_tensors="pt").to(device)
+      vision_processor(text=prompt, images=images, return_tensors="pt").to(device) if is_vision_model else text_processor(prompt, return_tensors="pt").to(device)
   )
   logger.info(f"Input shape: {inputs['input_ids'].shape}")
 
@@ -273,6 +305,11 @@ def generate_predictions(model, processors, questions, device, model_id, resume,
 
     logger.info(f"Generating prediction for question {idx+1}/{total} (id: {qid})...")
     content = compose_prediction(model, processors, question, device, is_vision_model=is_vision_model, max_retries=max_retries)
+
+    if not isinstance(content, PredictionResponse):
+      logger.error(f"Invalid prediction type for question {qid}, skipping.")
+      continue
+
     mp = ModelPrediction(question_id=qid, model=model_id, content=content)
     predictions.append(mp)
 
@@ -293,7 +330,7 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
     content = response.content if isinstance(response.content, str) else response.content.model_dump_json()
   else:
     logger.error(
-      f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
+        f"Invalid response type for judgment: {type(response)}, skipping question {question_id}, {response if isinstance(response, str) else response.content}"
     )
     return None
 
@@ -309,14 +346,14 @@ def extract_judge_answer(question, response: Union[str, ModelPrediction], model,
 
   if isinstance(judgment, JudgementResponse):
     return ModelJudgement(
-      question_id=question_id,
-      extracted_final_answer=judgment.extracted_final_answer,
-      question_text=question_text,
-      correct_answer=correct_answer,
-      reasoning=judgment.reasoning,
-      correct_yes_no=judgment.correct_yes_no,
-      confidence=judgment.confidence,
-      answer_type=answer_type,
+        question_id=question_id,
+        extracted_final_answer=judgment.extracted_final_answer,
+        question_text=question_text,
+        correct_answer=correct_answer,
+        reasoning=judgment.reasoning,
+        correct_yes_no=judgment.correct_yes_no,
+        confidence=judgment.confidence,
+        answer_type=answer_type,
     )
 
   print("Trace: judgment is not JudgementResponse")
@@ -346,12 +383,12 @@ def judge_predictions(dataset, predictions, model, processors, device, model_id,
 
     logger.info(f"Judging question {idx+1}/{total} (id: {qid})...")
     judge_result = extract_judge_answer(
-      question=question,
-      response=predictions[qid],
-      model=model,
-      processors=processors,
-      device=device,
-      max_retries=3,
+        question=question,
+        response=predictions[qid],
+        model=model,
+        processors=processors,
+        device=device,
+        max_retries=3,
     )
 
     if judge_result is not None:  # Filter out None results

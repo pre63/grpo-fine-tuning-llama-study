@@ -157,37 +157,40 @@ def _fix_incomplete_json(raw: str) -> str:
   if not cleaned:
     return '{"error": "empty output"}'
 
-  # Try parsing the original string first to avoid unnecessary fixes
+  # Try parsing the original string first
   try:
     json.loads(cleaned)
-    return cleaned  # If it parses, return as-is
+    return cleaned  # Return as-is if valid
   except json.JSONDecodeError:
-    pass  # Proceed to fix if parsing fails
+    pass
 
   # Count braces and quotes
   open_braces: int = cleaned.count("{")
   close_braces: int = cleaned.count("}")
   quote_count: int = cleaned.count('"')
 
-  # If it looks balanced and ends correctly, assume it’s fine
+  # If balanced and ends with }, assume it’s fine
   if open_braces == close_braces and quote_count % 2 == 0 and cleaned.endswith("}"):
     return cleaned
 
-  # Handle specific case: trailing malformed number (e.g., "95})
-  if cleaned.endswith('"}') and not cleaned[-3:-1].isdigit():
-    cleaned = cleaned[:-2] + '"'
+  # Handle truncated string values (e.g., "100} or "value,)
+  if cleaned.endswith("}") and quote_count % 2 != 0:  # Odd quotes means a string is unclosed
+    # Look for the last key-value pair and check if the value is truncated
+    last_quote_idx = cleaned.rfind('"')
+    if last_quote_idx != -1 and cleaned[last_quote_idx + 1 :].rstrip("}").strip():
+      # If there’s content after the last quote (e.g., "100), add a closing quote before }
+      cleaned = cleaned.rstrip("}") + '"}'
 
   # Remove trailing incomplete content (e.g., ", "key":")
-  cleaned = cleaned.rstrip('"}:, \t\n')
+  cleaned = cleaned.rstrip('":, \t\n')
 
-  # Balance quotes if uneven
-  if quote_count % 2 != 0:
+  # Balance quotes if still uneven
+  if cleaned.count('"') % 2 != 0:
     cleaned += '"'
 
   # Balance braces
-  while open_braces > close_braces:
+  while cleaned.count("{") > cleaned.count("}"):
     cleaned += "}"
-    close_braces += 1
 
   # Ensure it ends with a closing brace
   if not cleaned.endswith("}"):

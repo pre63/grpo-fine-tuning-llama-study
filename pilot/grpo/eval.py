@@ -58,7 +58,6 @@ class ModelJudgement(BaseModel):
   reasoning: str
   correct_yes_no: Literal["yes", "no"]
   confidence: int
-  strict: Literal[True]
 
 
 # --------------------------------------------------
@@ -307,8 +306,7 @@ def extract_judge_answer(
       extracted_final_answer=judgment.extracted_final_answer,
       reasoning=judgment.reasoning,
       correct_yes_no=judgment.correct_yes_no,
-      confidence=judgment.confidence,
-      strict=True,
+      confidence=judgment.confidence
     )
   print("Trace: judgment is not JudgementResponse")
   return None

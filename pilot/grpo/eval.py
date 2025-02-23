@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 
@@ -138,6 +139,10 @@ def generate_and_parse_json(
 
     logger.info(f"\n{divider}\n{prompt}\n---\n{fixed_decoded}\n{divider}\n")
 
+    if fixed_decoded is None:
+      logger.error(f"Failed to fix JSON for attempt {attempt + 1}. Returning None. {decoded}")
+      return None
+
     try:
       json_data: Dict[str, Any] = json.loads(fixed_decoded)
       result: BaseModel = expected_model.model_validate(json_data)
@@ -151,51 +156,32 @@ def generate_and_parse_json(
       return None
 
 
-def _fix_incomplete_json(raw: str) -> str:
-  """Attempt to fix incomplete JSON without breaking valid structures."""
+def _fix_incomplete_json(raw: str) -> Optional[str]:
+  """Fix incomplete or malformed JSON by seeking the object and appending "}."""
   cleaned: str = raw.strip()
+
   if not cleaned:
-    return '{"error": "empty output"}'
+    return None
 
-  # Try parsing the original string first
-  try:
-    json.loads(cleaned)
-    return cleaned  # Return as-is if valid
-  except json.JSONDecodeError:
-    pass
+  # Find the start of the JSON object
+  start_idx = cleaned.find("{")
+  if start_idx == -1:
+    return '{"error": "no json object found"}'
 
-  # Count braces and quotes
-  open_braces: int = cleaned.count("{")
-  close_braces: int = cleaned.count("}")
-  quote_count: int = cleaned.count('"')
+  # Take everything from the first { to the last }
+  last_brace_idx = cleaned.rfind("}")
+  if last_brace_idx != -1:
+    candidate = cleaned[start_idx : last_brace_idx + 1]
+    try:
+      json.loads(candidate)
+      return candidate  # If it parses, we’re done
+    except json.JSONDecodeError:
+      cleaned = candidate  # Use this as the base for fixing
+  else:
+    cleaned = cleaned[start_idx:]  # No closing brace, start fixing from here
 
-  # If balanced and ends with }, assume it’s fine
-  if open_braces == close_braces and quote_count % 2 == 0 and cleaned.endswith("}"):
-    return cleaned
-
-  # Handle truncated string values (e.g., "100} or "value,)
-  if cleaned.endswith("}") and quote_count % 2 != 0:  # Odd quotes means a string is unclosed
-    # Look for the last key-value pair and check if the value is truncated
-    last_quote_idx = cleaned.rfind('"')
-    if last_quote_idx != -1 and cleaned[last_quote_idx + 1 :].rstrip("}").strip():
-      # If there’s content after the last quote (e.g., "100), add a closing quote before }
-      cleaned = cleaned.rstrip("}") + '"}'
-
-  # Remove trailing incomplete content (e.g., ", "key":")
-  cleaned = cleaned.rstrip('":, \t\n')
-
-  # Balance quotes if still uneven
-  if cleaned.count('"') % 2 != 0:
-    cleaned += '"'
-
-  # Balance braces
-  while cleaned.count("{") > cleaned.count("}"):
-    cleaned += "}"
-
-  # Ensure it ends with a closing brace
-  if not cleaned.endswith("}"):
-    cleaned += "}"
-
+  # Trim trailing junk and always append "}"
+  cleaned = cleaned.rstrip("\"}:, '`\t\n") + '"\n}'
   return cleaned
 
 
@@ -420,6 +406,93 @@ if __name__ == "__main__":
   import unittest
 
   class TestEvaluation(unittest.TestCase):
+
+    def test_json_fixer(self):
+      test_cases = [
+        # Case 1: Extra closing brace
+        """
+          {
+            "explanation": "The average adult height of the population is 3 feet and 6 inches.",
+            "answer": "3.06",
+            "confidence": "100"
+          }
+          """,
+        """
+          ```
+          {
+            "explanation": "The average adult height of the population is 3 feet and 6 inches.",
+            "answer": "3.06",
+            "confidence": "100"
+          }
+          ```
+          """,
+        # Case 2: Extra text after valid JSON
+        """
+          Here is the response to your query in valid json:
+          ```
+          {
+            "explanation": "The average adult height of the population is 3 feet and 6 inches.",
+            "answer": "3.06",
+            "confidence": "100"
+          }
+          ```
+          Enjoy the solution.
+          """,
+        # Case 3: Truncated string value
+        """
+          {
+            "explanation": "The third homotopy group is T^3.",
+            "answer": "3",
+            "confidence": "100
+          }
+          """,
+        # Case 4: Completely valid JSON
+        """
+          {
+            "explanation": "All good here.",
+            "answer": "yes",
+            "confidence": "95"
+          }
+          """,
+        # Case 5: Missing closing brace
+        """
+          {
+            "explanation": "Incomplete JSON",
+            "answer": "no"
+          """,
+        # Case 6: Empty string
+        "",
+        # Case 7: Trailing comma after last value
+        """
+          {
+            "explanation": "Extra comma issue",
+            "answer": "yes",
+            "confidence": "90",
+          }
+          """,
+        # Case 8: Malformed number with extra brace
+        """
+          {
+            "explanation": "Height example",
+            "answer": "3.06",
+            "confidence": "100}
+          }
+          """,
+      ]
+
+      for idx, test in enumerate(test_cases, 1):
+        fixed = _fix_incomplete_json(test)
+        if fixed is None and test.strip() == "":
+          continue
+
+        try:
+          parsed = json.loads(fixed)
+          self.assertIsInstance(parsed, dict)
+        except json.JSONDecodeError as e:
+          self.fail(f"Failed to parse fixed JSON: {idx} - {e} - {fixed}")
+
+      logger.info("All json aprsing tests passed successfully!")
+
     def test_evaluation(self):
       logger.info("Starting evaluation test suite")
 

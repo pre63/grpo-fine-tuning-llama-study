@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 import torch
 from datasets import load_dataset
 from pydantic import BaseModel
+from thefuzz import fuzz  # Install with `pip install thefuzz`
 
 from grpo.eval import decode, read_judgements_json, read_predictions_json
 from grpo.hardware import get_parameters
@@ -56,24 +57,31 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
     model_answer = predictions_dict[qid].content.answer
     correct_answer = question["answer"]
 
-    audit_prompt = f"""Compare these two statements. Respond with exactly one word: 'same' if they are identical, 'similar' if they are close but not identical, 'different' if they are distinct. Use only 'same', 'different', or 'similar'.\n- {model_answer}\n- {correct_answer}\n\nAnswer: """
+    # Fuzzy matching shortcut
+    fuzzy_score = fuzz.ratio(str(model_answer).lower(), str(correct_answer).lower())
+    if fuzzy_score >= 95:  # High threshold for "same"
+      audit_result = "same"
+      print(f"Fuzzy match for {qid}: 'same' (score: {fuzzy_score}) - Skipping LLM")
+    elif fuzzy_score >= 80:  # Moderate threshold for "similar"
+      audit_result = "similar"
+      print(f"Fuzzy match for {qid}: 'similar' (score: {fuzzy_score}) - Skipping LLM")
+    else:
+      # Fallback to LLM if fuzzy match is inconclusive
+      audit_prompt = f"""Compare these two statements. Respond with exactly one word: 'same' if they are identical, 'similar' if they are close but not identical, 'different' if they are distinct. Use only 'same', 'different', or 'similar'.\n- {model_answer}\n- {correct_answer}\n\nAnswer: """
+      conversation = [{"role": "user", "content": [{"type": "text", "text": audit_prompt}]}]
+      prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+      inputs = text_processor(prompt, return_tensors="pt").to(device)
 
-    conversation = [{"role": "user", "content": [{"type": "text", "text": audit_prompt}]}]
-    prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
-    inputs = text_processor(prompt, return_tensors="pt").to(device)
+      with torch.no_grad():
+        raw_outputs = model.generate(**inputs, max_new_tokens=16)
+        decoded = decode(text_processor, inputs["input_ids"], raw_outputs).strip()
+        print(f"Model output for {qid}: '{decoded}'")
+        del raw_outputs
 
-    with torch.no_grad():
-      raw_outputs = model.generate(**inputs, max_new_tokens=16)
-      decoded = decode(text_processor, inputs["input_ids"], raw_outputs).strip()
-      print(f"Model output for {qid}: '{decoded}'")
-      del raw_outputs
-
-    # remove all non-alpha characters
-    audit_result = "".join([c for c in decoded if c.isalpha()])
-    audit_result = audit_result.lower().strip()
-    if audit_result not in ["same", "different", "similar"]:
-      print(f"Invalid audit response for {qid}: '{audit_result}'. Defaulting to 'different'")
-      audit_result = "different"
+      audit_result = "".join([c for c in decoded if c.isalpha()]).lower().strip()
+      if audit_result not in ["same", "different", "similar"]:
+        print(f"Invalid audit response for {qid}: '{audit_result}'. Defaulting to 'different'")
+        audit_result = "different"
 
     audit_entry = AuditEntry(
       question_id=qid,
@@ -95,7 +103,7 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
     if torch.cuda.is_available():
       torch.cuda.empty_cache()
 
-  # Summary and Statistics
+  # Summary and Statistics (unchanged)
   print("\n=== Audit Summary ===")
   success_count = 0
   failure_count = 0
@@ -129,7 +137,6 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
       elif judgement == "yes" and audit == "different":
         false_negative_count += 1
         if idx < 5:
-
           print(
             f"- False Negative: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'yes', Audit: 'different'"
           )

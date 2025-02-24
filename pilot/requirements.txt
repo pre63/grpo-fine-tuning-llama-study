@@ -17,6 +17,7 @@ scikit-learn
 scipy
 sentence-transformers
 sentencepiece
+thefuzz
 torch
 torchaudio
 torchao
@@ -24,5 +25,4 @@ torchtune
 torchvision
 transformers
 trl @ git+https://github.com/huggingface/trl.git@main
-vllm
 wandb

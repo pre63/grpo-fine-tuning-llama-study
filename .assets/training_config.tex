@@ -1,0 +1,36 @@
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{llr}
+    \toprule \\
+    Configuration & Parameter & Value \\
+    \midrule
+    \multirow{4}{*}{GRPO Config} 
+      & Learning Rate & \(5 \times 10^{-5}\) \\
+      & Batch Size (Train/Eval) & 4 \\
+      & Gradient Accumulation Steps & 16 \\
+      & Training Epochs & 5 \\
+    \midrule
+    \multirow{4}{*}{Quantization (4-bit)} 
+      & Quantization Type & NF4 \\
+      & Compute Data Type & bfloat16 \\
+      & Double Quantization & Enabled \\
+      & Load in 4-bit & Enabled \\
+    \midrule
+    \multirow{5}{*}{LoRA Config} 
+      & Rank (\(r\)) & 8 \\
+      & LoRA Alpha & 32 \\
+      & Target Modules & q\_proj, v\_proj \\
+      & Dropout & 0.05 \\
+      & DoRA Enabled & Yes \\
+    \midrule
+    \multirow{3}{*}{Generation} 
+      & Max Prompt Length & 2048 \\
+      & Max Completion Length & 1024 \\
+      & Temperature & 0.5 \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.2cm}
+  \caption{Configuration Parameters for Fine-Tuning LLaMA 3.2 1B Instruct with GRPO and QLoRA}
+  \label{tab:training_config}
+\end{table}

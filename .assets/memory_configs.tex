@@ -1,0 +1,20 @@
+\begin{table}[H]
+  \centering
+  \begin{tabular}{lrr}
+    \toprule
+    Component           & Memory (GB) & Notes \\
+    \midrule \\
+    Base Model (4-bit)  & 0.5         & Quantized weights \\
+    LoRA Parameters     & 0.1         & Rank 8 updates  \\
+    Optimizer States    & 12.0        & AdamW, bfloat16 \\
+    Gradients           & 8.0         & 16-step accumulation \\
+    GRPO Buffers        & 10.0        & Policy/reward computation \\
+    Activations         & 1.4         & Prompt/completion lengths \\
+    \midrule
+    Total               & 32.0        & Peak empirical usage \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.2cm}
+  \caption{Memory Requirements for Llama 3.2 1B Training}
+  \label{tab:memory_configs}
+\end{table}

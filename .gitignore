@@ -321,3 +321,6 @@ wandb
 
 Report.bcf-SAVE-ERROR
 pilot/all
+pilot/new_merged_predictions.json
+
+pilot/new_judged_questions.json

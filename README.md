@@ -1,6 +1,6 @@
 # Quantized Optimization of Mathematical Reasoning
 
-This repo supports the paper *Quantized Optimization of Mathematical Reasoning*, where we explore how Group Relative Policy Optimization (GRPO) can be used to fine-tune the LLaMA model. We test whether GRPO can improve LLAMA's performance at solving Humanity’s Last Exam (HLE) problems.
+This repo supports the paper *Quantized Optimization of Mathematical Reasoning*, where we explore how Group Relative Policy Optimization (GRPO) can be used to fine-tune the LLaMA model. We test whether GRPO can improve LLaMA's performance at solving Humanity’s Last Exam (HLE) problems.
 
 [Read the report here.](Report.pdf)
 

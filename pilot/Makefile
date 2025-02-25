@@ -62,7 +62,7 @@ eval:
 
 judge:
 	@$(MAKE) fix
-	@$(MAKE) py F="eval.py JUDGE=1"
+	@$(MAKE) py F="eval.py" JUDGE=1
 
 # Local and CUDA configurations
 local:

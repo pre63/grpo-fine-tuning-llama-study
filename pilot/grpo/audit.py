@@ -13,6 +13,28 @@ from grpo.hardware import get_parameters
 from grpo.model import get_model, get_processors
 
 
+def audit_prompt(model_answer: str, correct_answer: str) -> str:
+  return f"""
+      Statement 1:
+      ```
+        {model_answer}
+      ```
+
+      Statement 2:
+      ```
+        {correct_answer}
+      ```
+
+      Compare those two statements above.
+      Respond with exactly one word:
+      'same' if they are identical, numerical answers should be considered identical if they are exactly the same.
+      'similar' if have the same meaning
+      'different' otherwise.
+      
+      Use only 'same', 'different', or 'similar'.
+    """
+
+
 def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgements_filepath: str, model, processors, device, model_id):
   print(f"Reading predictions from {predictions_filepath}")
   predictions = read_predictions_json(predictions_filepath)
@@ -67,29 +89,34 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
       print(f"Fuzzy match for {qid}: 'similar' (score: {fuzzy_score}) - Skipping LLM")
     else:
       # Fallback to LLM if fuzzy match is inconclusive
-      audit_prompt = f"""Compare these two statements. Respond with exactly one word: 'same' if they are identical, 'similar' if they are close but not identical, 'different' if they are distinct. Use only 'same', 'different', or 'similar'.\n- {model_answer}\n- {correct_answer}\n\nAnswer: """
-      conversation = [{"role": "user", "content": [{"type": "text", "text": audit_prompt}]}]
+      conversation = [{"role": "user", "content": [{"type": "text", "text": audit_prompt(model_answer, correct_answer)}]}]
       prompt = text_processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
       inputs = text_processor(prompt, return_tensors="pt").to(device)
 
       with torch.no_grad():
         raw_outputs = model.generate(**inputs, max_new_tokens=16)
         decoded = decode(text_processor, inputs["input_ids"], raw_outputs).strip()
-        print(f"Model output for {qid}: '{decoded}'")
+        print(f"Raw LLM output for {qid}: '{decoded}'")
         del raw_outputs
 
       audit_result = "".join([c for c in decoded if c.isalpha()]).lower().strip()
       if audit_result not in ["same", "different", "similar"]:
         print(f"Invalid audit response for {qid}: '{audit_result}'. Defaulting to 'different'")
         audit_result = "different"
+      elif audit_result == "same" and fuzzy_score < 50:
+        print(f"Warning: Audit marked 'same' for {qid} but fuzzy score is low ({fuzzy_score}). Forcing 'different'")
+        audit_result = "different"
 
     audit_entry = AuditEntry(
-      question_id=qid,
-      question_text=question["question"],
-      correct_answer=correct_answer,
-      predicted_answer=model_answer,
-      judgement_correct_yes_no=judgements_dict[qid].correct_yes_no,
-      audit=audit_result,
+        question_id=qid,
+        question_text=question["question"],
+        correct_answer=correct_answer,
+        predicted_answer=model_answer,
+        judgement_correct_yes_no=judgements_dict[qid].correct_yes_no,
+        audit=audit_result,
+        false_positive=audit_result in ["same", "similar"] and judgements_dict[qid].correct_yes_no == "no",
+        false_negative=audit_result == "different" and judgements_dict[qid].correct_yes_no == "yes",
+        score=fuzzy_score,
     )
 
     audit_dict[qid] = audit_entry.model_dump()
@@ -132,13 +159,13 @@ def audit_predictions_and_judgements(dataset, predictions_filepath: str, judgeme
         false_positive_count += 1
         if idx < 5:
           print(
-            f"- False Positive: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'no', Audit: '{audit}'"
+              f"- False Positive: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'no', Audit: '{audit}'"
           )
       elif judgement == "yes" and audit == "different":
         false_negative_count += 1
         if idx < 5:
           print(
-            f"- False Negative: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'yes', Audit: 'different'"
+              f"- False Negative: QID: {qid}, Predicted: '{entry['predicted_answer']}', Correct: '{entry['correct_answer']}', Judgement: 'yes', Audit: 'different'"
           )
 
   print(f"\nStatistics:")
@@ -159,6 +186,9 @@ class AuditEntry(BaseModel):
   predicted_answer: str
   judgement_correct_yes_no: Literal["yes", "no"]
   audit: Literal["same", "different", "similar"]
+  false_positive: bool 
+  false_negative: bool
+  score: int
 
 
 def get_audit_filename(model_name):
@@ -215,38 +245,38 @@ if __name__ == "__main__":
       cls.test_dataset = load_dataset("cais/hle", split="test").select(range(2))
 
       cls.test_predictions = {
-        cls.test_dataset[0]["id"]: {
-          "question_id": cls.test_dataset[0]["id"],
-          "model": cls.model_id,
-          "content": {"explanation": "Test prediction 1", "answer": cls.test_dataset[0]["answer"], "confidence": 95},
-        },
-        cls.test_dataset[1]["id"]: {
-          "question_id": cls.test_dataset[1]["id"],
-          "model": cls.model_id,
-          "content": {"explanation": "Test prediction 2", "answer": "hello", "confidence": 90},
-        },
+          cls.test_dataset[0]["id"]: {
+              "question_id": cls.test_dataset[0]["id"],
+              "model": cls.model_id,
+              "content": {"explanation": "Test prediction 1", "answer": cls.test_dataset[0]["answer"], "confidence": 95},
+          },
+          cls.test_dataset[1]["id"]: {
+              "question_id": cls.test_dataset[1]["id"],
+              "model": cls.model_id,
+              "content": {"explanation": "Test prediction 2", "answer": "hello", "confidence": 90},
+          },
       }
       cls.test_judgements = {
-        cls.test_dataset[0]["id"]: {
-          "question_id": cls.test_dataset[0]["id"],
-          "extracted_final_answer": cls.test_dataset[0]["answer"],
-          "question_text": cls.test_dataset[0]["question"],
-          "correct_answer": cls.test_dataset[0]["answer"],
-          "reasoning": "Correct",
-          "correct_yes_no": "yes",
-          "confidence": 95,
-          "answer_type": cls.test_dataset[0]["answer_type"],
-        },
-        cls.test_dataset[1]["id"]: {
-          "question_id": cls.test_dataset[1]["id"],
-          "extracted_final_answer": "wrong",
-          "question_text": cls.test_dataset[1]["question"],
-          "correct_answer": cls.test_dataset[1]["answer"],
-          "reasoning": "Incorrect",
-          "correct_yes_no": "no",
-          "confidence": 90,
-          "answer_type": cls.test_dataset[1]["answer_type"],
-        },
+          cls.test_dataset[0]["id"]: {
+              "question_id": cls.test_dataset[0]["id"],
+              "extracted_final_answer": cls.test_dataset[0]["answer"],
+              "question_text": cls.test_dataset[0]["question"],
+              "correct_answer": cls.test_dataset[0]["answer"],
+              "reasoning": "Correct",
+              "correct_yes_no": "yes",
+              "confidence": 95,
+              "answer_type": cls.test_dataset[0]["answer_type"],
+          },
+          cls.test_dataset[1]["id"]: {
+              "question_id": cls.test_dataset[1]["id"],
+              "extracted_final_answer": "wrong",
+              "question_text": cls.test_dataset[1]["question"],
+              "correct_answer": cls.test_dataset[1]["answer"],
+              "reasoning": "Incorrect",
+              "correct_yes_no": "no",
+              "confidence": 90,
+              "answer_type": cls.test_dataset[1]["answer_type"],
+          },
       }
 
       cls.predictions_filepath = "test_predictions.json"
@@ -275,7 +305,7 @@ if __name__ == "__main__":
       print("Starting audit test")
 
       result = audit_predictions_and_judgements(
-        self.test_dataset, self.predictions_filepath, self.judgements_filepath, self.model, self.processors, self.device, self.model_id
+          self.test_dataset, self.predictions_filepath, self.judgements_filepath, self.model, self.processors, self.device, self.model_id
       )
 
       self.assertIsNotNone(result, "Audit result should not be None")
@@ -300,7 +330,7 @@ if __name__ == "__main__":
 
     def test_missing_files(self):
       result = audit_predictions_and_judgements(
-        self.test_dataset, "nonexistent_predictions.json", "nonexistent_judgements.json", self.model, self.processors, self.device, self.model_id
+          self.test_dataset, "nonexistent_predictions.json", "nonexistent_judgements.json", self.model, self.processors, self.device, self.model_id
       )
       self.assertIsNone(result)
 
